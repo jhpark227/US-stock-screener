@@ -1,0 +1,101 @@
+ticker,name,sector,sector_etf
+AAPL,Apple Inc.,Technology,XLK
+MSFT,Microsoft Corporation,Technology,XLK
+NVDA,NVIDIA Corporation,Semiconductors,SMH
+AMZN,Amazon.com Inc.,Consumer Discretionary,XLY
+META,Meta Platforms Inc.,Communication Services,XLC
+GOOGL,Alphabet Inc. Class A,Communication Services,XLC
+GOOG,Alphabet Inc. Class C,Communication Services,XLC
+AVGO,Broadcom Inc.,Semiconductors,SMH
+TSLA,Tesla Inc.,Consumer Discretionary,XLY
+BRK-B,Berkshire Hathaway Inc. Class B,Financials,XLF
+LLY,Eli Lilly and Company,Health Care,XLV
+JPM,JPMorgan Chase & Co.,Financials,XLF
+V,Visa Inc.,Financials,XLF
+UNH,UnitedHealth Group Inc.,Health Care,XLV
+XOM,Exxon Mobil Corporation,Energy,XLE
+MA,Mastercard Incorporated,Financials,XLF
+COST,Costco Wholesale Corporation,Consumer Staples,XLP
+HD,The Home Depot Inc.,Consumer Discretionary,XLY
+PG,Procter & Gamble Company,Consumer Staples,XLP
+NFLX,Netflix Inc.,Communication Services,XLC
+JNJ,Johnson & Johnson,Health Care,XLV
+WMT,Walmart Inc.,Consumer Staples,XLP
+ABBV,AbbVie Inc.,Health Care,XLV
+BAC,Bank of America Corporation,Financials,XLF
+ORCL,Oracle Corporation,Technology,XLK
+KO,The Coca-Cola Company,Consumer Staples,XLP
+MRK,Merck & Co. Inc.,Health Care,XLV
+PLTR,Palantir Technologies Inc.,Technology,XLK
+CRM,Salesforce Inc.,Technology,XLK
+AMD,Advanced Micro Devices Inc.,Semiconductors,SMH
+CVX,Chevron Corporation,Energy,XLE
+CSCO,Cisco Systems Inc.,Technology,XLK
+IBM,International Business Machines Corporation,Technology,XLK
+MCD,McDonald's Corporation,Consumer Discretionary,XLY
+GE,GE Aerospace,Industrials,XLI
+WFC,Wells Fargo & Company,Financials,XLF
+ABT,Abbott Laboratories,Health Care,XLV
+LIN,Linde plc,Materials,XLB
+PM,Philip Morris International Inc.,Consumer Staples,XLP
+NOW,ServiceNow Inc.,Technology,XLK
+DIS,The Walt Disney Company,Communication Services,XLC
+INTU,Intuit Inc.,Technology,XLK
+QCOM,QUALCOMM Incorporated,Semiconductors,SMH
+TXN,Texas Instruments Incorporated,Semiconductors,SMH
+ISRG,Intuitive Surgical Inc.,Health Care,XLV
+CAT,Caterpillar Inc.,Industrials,XLI
+VZ,Verizon Communications Inc.,Communication Services,XLC
+T,AT&T Inc.,Communication Services,XLC
+PEP,PepsiCo Inc.,Consumer Staples,XLP
+AMGN,Amgen Inc.,Health Care,XLV
+GS,The Goldman Sachs Group Inc.,Financials,XLF
+RTX,RTX Corporation,Industrials,XLI
+BKNG,Booking Holdings Inc.,Consumer Discretionary,XLY
+SPGI,S&P Global Inc.,Financials,XLF
+LOW,Lowe's Companies Inc.,Consumer Discretionary,XLY
+HON,Honeywell International Inc.,Industrials,XLI
+PFE,Pfizer Inc.,Health Care,XLV
+NEE,NextEra Energy Inc.,Utilities,XLU
+AMAT,Applied Materials Inc.,Semiconductors,SMH
+UBER,Uber Technologies Inc.,Consumer Discretionary,XLY
+CMCSA,Comcast Corporation,Communication Services,XLC
+AXP,American Express Company,Financials,XLF
+MS,Morgan Stanley,Financials,XLF
+TJX,The TJX Companies Inc.,Consumer Discretionary,XLY
+UNP,Union Pacific Corporation,Industrials,XLI
+SCHW,The Charles Schwab Corporation,Financials,XLF
+DHR,Danaher Corporation,Health Care,XLV
+BLK,BlackRock Inc.,Financials,XLF
+ETN,Eaton Corporation plc,Industrials,XLI
+SYK,Stryker Corporation,Health Care,XLV
+COP,ConocoPhillips,Energy,XLE
+BA,The Boeing Company,Industrials,XLI
+DE,Deere & Company,Industrials,XLI
+ADP,Automatic Data Processing Inc.,Industrials,XLI
+GILD,Gilead Sciences Inc.,Health Care,XLV
+LRCX,Lam Research Corporation,Semiconductors,SMH
+PANW,Palo Alto Networks Inc.,Technology,XLK
+ADI,Analog Devices Inc.,Semiconductors,SMH
+KLAC,KLA Corporation,Semiconductors,SMH
+MU,Micron Technology Inc.,Semiconductors,SMH
+C,Citigroup Inc.,Financials,XLF
+MDT,Medtronic plc,Health Care,XLV
+CB,Chubb Limited,Financials,XLF
+BX,Blackstone Inc.,Financials,XLF
+BMY,Bristol Myers Squibb Company,Health Care,XLV
+SBUX,Starbucks Corporation,Consumer Discretionary,XLY
+MDLZ,Mondelez International Inc.,Consumer Staples,XLP
+ELV,Elevance Health Inc.,Health Care,XLV
+REGN,Regeneron Pharmaceuticals Inc.,Health Care,XLV
+VRTX,Vertex Pharmaceuticals Incorporated,Health Care,XLV
+SO,The Southern Company,Utilities,XLU
+DUK,Duke Energy Corporation,Utilities,XLU
+UPS,United Parcel Service Inc.,Industrials,XLI
+KKR,KKR & Co. Inc.,Financials,XLF
+ANET,Arista Networks Inc.,Technology,XLK
+APH,Amphenol Corporation,Industrials,XLI
+BSX,Boston Scientific Corporation,Health Care,XLV
+ICE,Intercontinental Exchange Inc.,Financials,XLF
+SHW,The Sherwin-Williams Company,Materials,XLB
+WM,Waste Management Inc.,Industrials,XLI
