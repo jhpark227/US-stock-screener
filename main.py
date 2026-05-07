@@ -322,7 +322,9 @@ def evaluate_stock(
     frame["high_50d"] = close.rolling(config.rs_high_window).max()
     frame["close_to_50d_high"] = close / frame["high_50d"]
     frame["avg_volume_20d"] = volume.rolling(config.volume_window).mean()
+    frame["avg_volume_5d"] = volume.rolling(5).mean()
     frame["volume_ratio"] = volume / frame["avg_volume_20d"]
+    frame["volume_trend"] = frame["avg_volume_5d"] / frame["avg_volume_20d"]
     frame["capped_volume_ratio"] = frame["volume_ratio"].clip(upper=config.volume_ratio_cap)
     range_size = (high - low).replace(0, np.nan)
     frame["close_position"] = ((close - low) / range_size).fillna(0.5)
@@ -388,19 +390,18 @@ def evaluate_stock(
         and row["daily_return"] < config.max_daily_return
     )
     volume_quality = (
-        row["volume_ratio"] >= config.volume_ratio_min
-        and row["Close"] > close.iloc[-2]
-        and row["close_position"] >= config.close_position_min
+        row["volume_trend"] >= config.volume_ratio_min
+        and row["close_position"] >= 0.5
     )
+    # 하드 필터: "절대 배제" 조건만 포함
+    # - 유동성 미달, 추세 붕괴(MA50 이탈+하강), RS 음수, 과열
+    # rs_near_high / near_50d_high / rs_sector_positive 는 스코어로 반영
     passed = all(
         [
             liquidity_ok,
-            rs_near_high,
             rs_positive,
-            rs_sector_positive,
             above_ma50,
             ma50_rising,
-            near_50d_high,
             not_overheated,
         ]
     )
@@ -459,6 +460,7 @@ def evaluate_stock(
         "rs_sector_50d": row["rs_sector_50d"],
         "close_to_50d_high": row["close_to_50d_high"],
         "volume_ratio": row["volume_ratio"],
+        "volume_trend": row["volume_trend"],
         "capped_volume_ratio": row["capped_volume_ratio"],
         "avg_dollar_volume_20d": row["avg_dollar_volume_20d"],
         "close_position": row["close_position"],
@@ -497,22 +499,20 @@ def add_scores(results: pd.DataFrame) -> pd.DataFrame:
         results["score"] = pd.Series(dtype=float)
         return results
 
-    candidates = results["passed_hard_filters"].fillna(False)
-    scored = results.loc[candidates].copy()
-    if scored.empty:
-        results["score"] = np.nan
-        return results
+    # 전체 종목에 스코어 부여 — 하드 필터 통과 여부와 무관하게 순위 파악 가능
+    scored = results.copy()
+    # RS 가속도: 단기 RS가 중기 RS를 상회하면 모멘텀 개선 중
+    rs_acceleration = scored["rs_spy_20d"] - scored["rs_spy_50d"]
 
     scored["score"] = (
-        0.25 * scored["rs_spy_20d"].rank(pct=True)
-        + 0.20 * scored["rs_spy_50d"].rank(pct=True)
-        + 0.15 * scored["rs_sector_20d"].rank(pct=True, na_option="bottom")
-        + 0.20 * scored["close_to_50d_high"].rank(pct=True)
-        + 0.15 * scored["capped_volume_ratio"].rank(pct=True)
-        + 0.05 * scored["close_position"].rank(pct=True)
+        0.20 * scored["rs_spy_20d"].rank(pct=True)          # 단기 RS 방향
+        + 0.25 * scored["rs_spy_50d"].rank(pct=True)         # 중기 RS 수준 (안정성)
+        + 0.15 * rs_acceleration.rank(pct=True)              # RS 가속도 (근접도 대체)
+        + 0.15 * scored["rs_sector_20d"].rank(pct=True, na_option="bottom")  # 섹터 RS
+        + 0.15 * scored["close_to_50d_high"].rank(pct=True)  # 가격 고점 근접도
+        + 0.10 * scored["capped_volume_ratio"].rank(pct=True) # 거래량
     )
-    results["score"] = np.nan
-    results.loc[scored.index, "score"] = scored["score"]
+    results["score"] = scored["score"]
     return results.sort_values(
         ["passed_hard_filters", "score", "rs_spy_20d"],
         ascending=[False, False, False],

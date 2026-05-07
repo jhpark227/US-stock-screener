@@ -1087,14 +1087,12 @@ INDEX_HTML = r"""
       <ul>
         <li><strong>시장 환경</strong> — SPY·QQQ 기반 4단계 분류: Confirmed Uptrend / Uptrend Under Pressure / Market in Correction. 하락장에서는 후보 출력 시 경고 배너 표시.</li>
         <li><strong>유동성</strong> — 20일 평균 거래대금 ≥ 기준값. 저유동성 종목 제외.</li>
-        <li><strong>RS 고점 근접</strong> — SPY 대비 상대강도(RS)가 최근 50일 RS 최고값의 98% 이상.</li>
-        <li><strong>RS 20D 양수</strong> — 20일 SPY 대비 RS 변화율 &gt; 0.</li>
+        <li><strong>RS 20D 양수</strong> — 20일 SPY 대비 RS 변화율 &gt; 0. 시장 수익률을 상회하는 종목만 선별.</li>
         <li><strong>MA50 위 + 상승</strong> — 종가 &gt; 50일 이동평균, MA50이 10일 전보다 높음.</li>
-        <li><strong>50일 고점 근접</strong> — 종가 ≥ 최근 50일 최고가의 90%.</li>
         <li><strong>과열 없음</strong> — 종가 ≤ MA20의 125%, 5일 수익률 &lt; 40%, 당일 수익률 &lt; 25%.</li>
-        <li><strong>등급 A</strong> — 위 조건 통과 + 거래량 품질(거래량비율 ≥ 1.3배, 양봉, 종가위치 ≥ 60%).</li>
+        <li><strong>등급 A</strong> — 위 조건 통과 + 거래량 품질(최근 5일 평균 거래량 ≥ 20일 평균의 1.3배 + 종가위치 ≥ 50%).</li>
         <li><strong>등급 B</strong> — 위 조건만 통과, 거래량 품질 미충족.</li>
-        <li><strong>점수</strong> — RS 20D(25%) + RS 50D(20%) + 섹터 RS(15%) + 50일 고점 근접도(20%) + 거래량비율(15%) + 종가위치(5%) percentile 가중합.</li>
+        <li><strong>점수</strong> — RS 50D(25%) + RS 20D(20%) + RS 가속도(15%) + 섹터 RS(15%) + 50일 고점 근접도(15%) + 거래량비율(10%) percentile 가중합. 전체 종목 대상으로 계산되므로 탈락 종목도 상대 순위 파악 가능.</li>
         <li><strong>Stage</strong> — 돌파 후 경과일 기준: Early Breakout(≤7일) / Trending(≤35일) / Extended(35일+). 조기 돌파 종목이 가장 안전한 구간.</li>
         <li><strong>Pivot / vs Pivot</strong> — 50일 고점을 피벗 기준가로 사용. vs Pivot이 +5% 초과(⚠)면 추격 위험.</li>
         <li><strong>Base</strong> — 베이스 기간 변동성 대비 최근 변동성 비율(높을수록 안정적 베이스 후 돌파).</li>
@@ -1114,16 +1112,8 @@ INDEX_HTML = r"""
           <dd>각각 최근 20일·50일 동안 SPY 대비 상대강도 변화율입니다. 단기(20D)는 최근 모멘텀, 중기(50D)는 추세의 지속성을 봅니다. 둘 다 양수면 단·중기 모두 시장 대비 강한 흐름.</dd>
         </div>
         <div class="guide-term">
-          <dt>RS 고점 근접 (RS Near High)</dt>
-          <dd>최근 50일 중 RS가 가장 높았던 시점의 98% 수준 이상에 있다는 의미입니다. 과거에 한 번 강세를 보였고, 지금도 그 강도를 유지하고 있는 종목을 걸러냅니다. 조금 전에 RS 최고점을 찍고 지금 밀리는 종목은 탈락합니다.</dd>
-        </div>
-        <div class="guide-term">
           <dt>MA50 위 + 상승</dt>
           <dd>50일 이동평균선(최근 50일 평균 주가)보다 현재 주가가 위에 있고, 그 평균선 자체도 10일 전보다 높아진 상태입니다. 단순히 평균 위에 있는 게 아니라 추세 자체가 위를 향하고 있다는 의미입니다.</dd>
-        </div>
-        <div class="guide-term">
-          <dt>50일 고점 근접</dt>
-          <dd>최근 50일 최고가의 90% 이상에 위치해 있다는 의미입니다. "저점에서 반등 중"인 종목이 아니라, 고점 근처에서 버티고 있는 강한 종목만 선별합니다.</dd>
         </div>
         <div class="guide-term">
           <dt>과열 없음</dt>
@@ -1131,11 +1121,15 @@ INDEX_HTML = r"""
         </div>
         <div class="guide-term">
           <dt>등급 A / B</dt>
-          <dd><strong>A등급</strong>: 위 모든 조건 충족 + 당일 거래량이 20일 평균의 1.3배 이상이고 양봉이며 종가가 당일 범위 상단 60% 이상. 추세와 거래량이 동시에 확인된 가장 신뢰도 높은 신호.<br><strong>B등급</strong>: 추세 조건은 충족하나 거래량 확인 미충족. 진입 전 거래량 추이 별도 확인 권장.</dd>
+          <dd><strong>A등급</strong>: 하드 필터 통과 + 최근 5일 평균 거래량이 20일 평균의 1.3배 이상 + 종가가 당일 범위 50% 이상. 단발성 거래량 이벤트가 아니라 며칠간 수급이 유지되고 있음을 확인한 종목.<br><strong>B등급</strong>: 추세 조건은 충족하나 거래량 지속성 미확인. 관심 종목으로 등록 후 거래량 추이를 별도 확인 권장.</dd>
         </div>
         <div class="guide-term">
           <dt>점수 (Score) · 섹터 RS</dt>
-          <dd><strong>점수</strong>: RS 20D·50D, 고점 근접도, 거래량, 종가위치를 percentile 가중합으로 계산한 0~1 사이 값. 높을수록 현재 장에서 상대적으로 강한 종목.<br><strong>섹터 RS</strong>: SPY 대신 해당 섹터 ETF(IT→XLK 등)와 비교한 상대강도. 섹터 전체가 강한 건지, 그 안에서 특히 강한 종목인지 파악하는 데 활용.</dd>
+          <dd><strong>점수</strong>: RS 50D(25%) + RS 20D(20%) + RS 가속도(15%) + 섹터 RS(15%) + 50일 고점 근접도(15%) + 거래량비율(10%)를 percentile 가중합으로 계산한 0~1 사이 값. 하드 필터 통과 여부와 무관하게 전체 종목에 부여되므로, 탈락 종목도 상대 강도 비교에 활용 가능.<br><strong>RS 가속도</strong>: RS 20D에서 RS 50D를 뺀 값. 양수면 단기 RS가 중기 RS를 앞서고 있어 모멘텀이 강화 중임을 의미.<br><strong>섹터 RS</strong>: SPY 대신 해당 섹터 ETF(IT→XLK 등)와 비교한 상대강도. 섹터 전체가 강한 건지, 그 안에서 특히 강한 종목인지 파악하는 데 활용.</dd>
+        </div>
+        <div class="guide-term">
+          <dt>50일 고점 근접 (50D High)</dt>
+          <dd>최근 50일 최고가 대비 현재 종가 비율. 하드 필터에서는 제외되고 점수에 반영됩니다. 1.0에 가까울수록 고점 부근에서 강하게 버티고 있는 종목.</dd>
         </div>
       </dl>
     </details>
@@ -1382,8 +1376,8 @@ INDEX_HTML = r"""
       const candidates = data.candidates_count || 0;
       const gradeA     = data.grade_counts?.A || 0;
 
-      // RS Near High 통과율
-      const rsStep    = steps.find(s => s.label === "RS Near High");
+      // RS 20D > 0 통과율 (시장 폭 지표)
+      const rsStep    = steps.find(s => s.label === "RS 20D > 0");
       const rsPassPct = rsStep ? rsStep.count / total * 100 : 0;
 
       // 섹터 집중도
@@ -1401,13 +1395,13 @@ INDEX_HTML = r"""
 
       const items = [];
 
-      // 1. 시장 환경 (RS 통과율 기반)
-      if (rsPassPct < 10) {
-        items.push(`<span class="tag warn">좁은 시장</span>전체 ${total}개 중 ${rsStep?.count || 0}개(${rsPassPct.toFixed(0)}%)만 SPY 대비 상대강도 고점 유지 — 지수가 개별주를 앞서는 장세. 후보군이 압축될수록 통과 종목의 신뢰도는 높아집니다.`);
-      } else if (rsPassPct < 25) {
-        items.push(`<span class="tag neutral">선별적 강세</span>전체의 ${rsPassPct.toFixed(0)}%가 RS 고점 근처 — 일부 섹터에서 주도주가 형성되는 국면. 섹터 선택이 중요합니다.`);
+      // 1. 시장 폭 (RS 20D > 0 통과율 기반)
+      if (rsPassPct < 20) {
+        items.push(`<span class="tag warn">좁은 시장</span>전체 ${total}개 중 ${rsStep?.count || 0}개(${rsPassPct.toFixed(0)}%)만 SPY 대비 20일 RS 양수 — 지수 상승을 이끄는 종목이 소수. 후보군이 압축될수록 통과 종목의 신뢰도는 높아집니다.`);
+      } else if (rsPassPct < 40) {
+        items.push(`<span class="tag neutral">선별적 강세</span>전체의 ${rsPassPct.toFixed(0)}%가 SPY 대비 RS 양수 — 일부 섹터에서 주도주가 형성되는 국면. 섹터 선택이 중요합니다.`);
       } else {
-        items.push(`<span class="tag">광범위 강세</span>전체의 ${rsPassPct.toFixed(0)}%가 RS 고점 유지 — 개별주 전반에 걸쳐 강세 흐름. 종목 선택의 폭이 넓습니다.`);
+        items.push(`<span class="tag">광범위 강세</span>전체의 ${rsPassPct.toFixed(0)}%가 시장 수익률 상회 — 개별주 전반에 걸쳐 강세 흐름. 종목 선택의 폭이 넓습니다.`);
       }
 
       // 2. 섹터 집중도
@@ -1703,11 +1697,9 @@ INDEX_HTML = r"""
       "Universe":       "전체 입력 종목",
       "Evaluated":      "데이터 충분한 종목",
       "Liquidity":      "거래대금 기준 충족",
-      "RS Near High":   "RS가 50일 고점 근처",
-      "RS 20D > 0":     "20일 RS 양수",
+      "RS 20D > 0":     "20일 SPY 대비 RS 양수 — 시장 수익률 상회",
       "Close > MA50":   "종가가 MA50 위",
       "MA50 Rising":    "MA50 상승 중",
-      "Near 50D High":  "50일 고점 90% 이상",
       "Not Overheated": "과열·급등 없음",
       "A Grade":        "거래량 품질 충족",
     };
@@ -1736,15 +1728,15 @@ INDEX_HTML = r"""
 
       const cfg = data.config || {};
       const params = [
-        `RS near high ${Math.round((cfg.rs_near_high_threshold ?? 0.98) * 100)}%`,
-        `50D High ≥ ${Math.round((cfg.near_50d_high_threshold ?? 0.90) * 100)}%`,
-        `Volume ≥ ${(cfg.volume_ratio_min ?? 1.3).toFixed(1)}x`,
-        `Close Pos ≥ ${Math.round((cfg.close_position_min ?? 0.6) * 100)}%`,
+        `Volume ≥ ${(cfg.volume_ratio_min ?? 1.3).toFixed(1)}x (A등급)`,
+        `Close Pos ≥ ${Math.round((cfg.close_position_min ?? 0.6) * 100)}% (A등급)`,
+        `스코어: RS50D 25% · RS20D 20% · RS가속 15% · 섹터RS 15% · 50D고점 15% · 거래량 10%`,
       ].map(t => `<span class="chip">${escapeHtml(t)}</span>`).join("");
 
       filterFunnel.innerHTML = stepsHtml +
         `<div class="funnel-params">${params}</div>`;
     }
+
 
     const columnTooltips = {
       "_rank":                  "점수 기준 순위",
@@ -1897,11 +1889,9 @@ INDEX_HTML = r"""
     // --- Ticker search ---
     const filterLabels = {
       "liquidity_ok":        "유동성",
-      "rs_spy_near_high":    "RS 고점 근접",
       "rs_positive":         "RS 20D > 0",
       "above_ma50":          "MA50 위",
       "ma50_rising":         "MA50 상승",
-      "near_50d_high":       "50일 고점 근접",
       "not_overheated":      "과열 없음",
       "passed_hard_filters": "하드 필터 통과",
       "volume_quality":      "거래량 품질 (A등급)",
@@ -1909,21 +1899,12 @@ INDEX_HTML = r"""
 
     const filterFailReasons = {
       "liquidity_ok":        (m) => `20일 평균 거래대금이 기준 미달 — 유동성이 낮아 제외됩니다.`,
-      "rs_spy_near_high":    (m) => {
-        const v = m.close_to_50d_high;
-        return `최근 50일 RS 최고점에서 멀어진 상태 — SPY 대비 상대강도가 최근 고점의 98% 아래로 떨어졌습니다. 과거엔 강했어도 지금은 모멘텀이 식고 있다는 신호입니다.`;
-      },
       "rs_positive":         (m) => `최근 20일간 SPY 대비 상대강도(RS)가 마이너스 — 시장 전체보다 더 많이 하락했습니다.`,
       "above_ma50":          (m) => `현재 주가가 50일 이동평균선 아래 — 중기 추세가 하락 방향입니다.`,
       "ma50_rising":         (m) => `50일 이동평균선이 10일 전보다 낮아짐 — 평균선 자체가 하향 중이어서 추세 약화 신호입니다.`,
-      "near_50d_high":       (m) => {
-        const v = m.close_to_50d_high;
-        const pct = v != null ? ` (현재 ${(v*100).toFixed(1)}%, 기준 90%)` : "";
-        return `최근 50일 최고가의 90% 미만${pct} — 고점에서 많이 밀린 상태로, 저점 반등 종목에 가깝습니다.`;
-      },
       "not_overheated":      (m) => `단기 급등 감지 — MA20 대비 125% 초과이거나, 5일 수익률 40% 이상이거나, 당일 수익률 25% 이상입니다. 추격 매수 위험이 높은 구간입니다.`,
       "passed_hard_filters": (m) => `위 필터 중 하나 이상 탈락 — 최종 후보군에 포함되지 않았습니다.`,
-      "volume_quality":      (m) => `거래량 품질 미충족 — 거래량비율 1.3배 미만이거나, 음봉이거나, 종가위치가 당일 범위 하단에 있습니다. B등급으로 분류됩니다.`,
+      "volume_quality":      (m) => `거래량 품질 미충족 — 최근 5일 평균 거래량이 20일 평균의 1.3배 미만이거나, 종가위치가 당일 범위 50% 미만입니다. B등급으로 분류됩니다.`,
     };
 
     function renderTickerResult(d) {
@@ -1949,7 +1930,7 @@ INDEX_HTML = r"""
       if (!hasResult) {
         body = `<div style="color:var(--muted);font-size:12px;margin-top:6px">스크리너 결과가 없습니다. Run Screener를 먼저 실행해 주세요.</div>`;
       } else {
-        const filterKeys = ["liquidity_ok","rs_spy_near_high","rs_positive","above_ma50","ma50_rising","near_50d_high","not_overheated","passed_hard_filters","volume_quality"];
+        const filterKeys = ["liquidity_ok","rs_positive","above_ma50","ma50_rising","not_overheated","passed_hard_filters","volume_quality"];
         const chips = filterKeys.map(key => {
           const val = filters[key];
           if (val === null || val === undefined) return "";
@@ -2393,11 +2374,9 @@ def filter_steps(results: pd.DataFrame, universe_count: int) -> list[dict[str, o
     mask = pd.Series(True, index=results.index)
     filters = [
         ("Liquidity",      bool_filter("liquidity_ok")),
-        ("RS Near High",   bool_filter("rs_spy_near_high")),
         ("RS 20D > 0",     bool_filter("rs_positive", results["rs_spy_20d"] > 0)),
         ("Close > MA50",   bool_filter("above_ma50")),
         ("MA50 Rising",    bool_filter("ma50_rising")),
-        ("Near 50D High",  bool_filter("near_50d_high", results["close_to_50d_high"] >= 0.90)),
         ("Not Overheated", bool_filter("not_overheated")),
     ]
     previous = len(results)
@@ -2453,7 +2432,7 @@ def response_from_results(
         "ticker", "name", "sector", "grade", "score",
         "market_cap",
         "rs_spy_20d", "rs_spy_50d", "rs_sector_20d",
-        "close_to_50d_high", "volume_ratio", "close_position",
+        "close_to_50d_high", "volume_ratio", "volume_trend", "close_position",
         "rsi_14", "avg_dollar_volume_20d", "return_20d",
         # 신규 투자 맥락 필드
         "trend_stage", "pivot_price", "pivot_distance", "chasing_risk",
