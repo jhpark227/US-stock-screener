@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import pickle
 import traceback
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -12,7 +13,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 import numpy as np
 import pandas as pd
 
-from main import DEFAULT_OUTPUT_DIR, DEFAULT_TICKER_FILE, ScreenerConfig, load_universe, run_screener
+from main import DEFAULT_OUTPUT_DIR, DEFAULT_TICKER_FILE, DEFAULT_YFINANCE_CACHE_DIR, ScreenerConfig, _symbol_cache_dir, load_universe, run_screener
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -26,7 +27,10 @@ INDEX_HTML = r"""
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>RS Volume Screener</title>
+  <title>APEX — Alpha Pulse Equity eXplorer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,700;1,9..40,400&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
     :root {
       color-scheme: light;
@@ -48,7 +52,7 @@ INDEX_HTML = r"""
       margin: 0;
       background: var(--bg);
       color: var(--text);
-      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family: 'DM Sans', ui-sans-serif, system-ui, sans-serif;
       font-size: 14px;
       line-height: 1.45;
     }
@@ -56,7 +60,7 @@ INDEX_HTML = r"""
     button, input, select { font: inherit; }
 
     .shell {
-      width: min(1320px, calc(100vw - 32px));
+      width: min(1680px, calc(100vw - 32px));
       margin: 0 auto;
       padding: 24px 0 40px;
     }
@@ -69,7 +73,21 @@ INDEX_HTML = r"""
       margin-bottom: 18px;
     }
 
-    h1 { margin: 0; font-size: 24px; line-height: 1.1; }
+    h1 { margin: 0; font-size: 28px; font-weight: 700; line-height: 1.1; letter-spacing: -0.02em; }
+    h1 .apex-sub { font-size: 11px; font-weight: 500; letter-spacing: 0.08em; color: var(--muted); text-transform: uppercase; display: block; margin-bottom: 4px; }
+
+    .btn-ghost {
+      background: none;
+      border: 1px solid var(--line);
+      color: var(--text);
+      font-size: 13px;
+      padding: 6px 14px;
+      min-height: 34px;
+      border-radius: 6px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .btn-ghost:hover { background: #f0f0ec; }
 
     .subtle { color: var(--muted); }
 
@@ -153,16 +171,16 @@ INDEX_HTML = r"""
     }
 
     .metric {
-      min-height: 82px;
+      min-height: 96px;
       background: var(--surface);
       border: 1px solid var(--line);
       border-radius: 8px;
       box-shadow: var(--shadow);
-      padding: 13px;
+      padding: 16px 14px;
     }
 
     .metric .label { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
-    .metric .value { font-size: 24px; font-weight: 700; line-height: 1.1; }
+    .metric .value { font-size: 24px; font-weight: 700; line-height: 1.1; font-family: 'DM Mono', monospace; }
     .metric .note { color: var(--muted); margin-top: 7px; font-size: 12px; }
 
     .funnel { display: grid; gap: 9px; }
@@ -258,6 +276,76 @@ INDEX_HTML = r"""
       font-size: 12px;
     }
 
+    /* Market cap buttons */
+    .mcap-filter {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .mcap-group {
+      display: flex;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      overflow: visible;
+    }
+
+    .mcap-btn {
+      position: relative;
+      min-height: 30px;
+      padding: 4px 11px;
+      border: none;
+      border-radius: 0;
+      border-right: 1px solid var(--line);
+      background: #fff;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .mcap-btn:first-child { border-radius: 5px 0 0 5px; }
+    .mcap-btn:last-child  { border-right: none; border-radius: 0 5px 5px 0; }
+
+    .mcap-btn.active {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .mcap-btn:not(.active):hover { background: #f0f0ec; }
+
+    .mcap-btn .mcap-tooltip {
+      display: none;
+      position: absolute;
+      bottom: calc(100% + 7px);
+      left: 50%;
+      transform: translateX(-50%);
+      background: #2a2e29;
+      color: #fff;
+      font-size: 11px;
+      font-weight: 400;
+      white-space: nowrap;
+      padding: 4px 8px;
+      border-radius: 5px;
+      pointer-events: none;
+      z-index: 10;
+    }
+
+    .mcap-btn .mcap-tooltip::after {
+      content: "";
+      position: absolute;
+      top: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      border: 5px solid transparent;
+      border-top-color: #2a2e29;
+    }
+
+    .mcap-btn:hover .mcap-tooltip { display: block; }
+
     /* Candidates panel */
     .candidate-header {
       display: flex;
@@ -317,6 +405,14 @@ INDEX_HTML = r"""
       max-height: 820px;
       border: 1px solid var(--line);
       border-radius: 8px;
+      background:
+        linear-gradient(to right, var(--surface) 20px, transparent) left center,
+        linear-gradient(to left,  var(--surface) 20px, transparent) right center,
+        radial-gradient(farthest-side at 0 50%, rgba(0,0,0,.08), transparent) left center,
+        radial-gradient(farthest-side at 100% 50%, rgba(0,0,0,.08), transparent) right center;
+      background-repeat: no-repeat;
+      background-size: 60px 100%, 60px 100%, 16px 100%, 16px 100%;
+      background-attachment: local, local, scroll, scroll;
     }
 
     table {
@@ -360,9 +456,41 @@ INDEX_HTML = r"""
 
     tr:last-child td { border-bottom: 0; }
 
-    .num { text-align: right; font-variant-numeric: tabular-nums; }
-    .rank { text-align: right; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; width: 32px; }
-    .ticker { font-weight: 700; }
+    tbody tr:hover { background: #f6f9f7; }
+    tfoot tr { border-top: 2px solid var(--border); background: #f6f9f7; }
+
+    .num { text-align: right; font-variant-numeric: tabular-nums; font-family: 'DM Mono', monospace; font-size: 13px; }
+    .rank { text-align: right; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; font-family: 'DM Mono', monospace; width: 32px; }
+    .ticker { font-weight: 700; font-family: 'DM Mono', monospace; letter-spacing: 0.02em; }
+
+    /* diff badge column */
+    .diff-badge-cell { width: 36px; padding: 0 4px 0 8px; }
+    .db { display: inline-flex; align-items: center; justify-content: center;
+          font-size: 10px; font-weight: 700; letter-spacing: 0.02em;
+          padding: 1px 5px; border-radius: 4px; white-space: nowrap; }
+    .db-new  { background: #dcebe5; color: var(--accent); }
+    .db-up   { background: #dcebe5; color: var(--accent); }
+    .db-down { background: #fef0dc; color: var(--warn); }
+
+    /* diff summary section */
+    .diff-section {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      padding: 14px 18px;
+      margin-bottom: 16px;
+    }
+    .diff-section h3 { margin: 0 0 10px; font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+    .diff-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+    .diff-chip { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 500; border: 1px solid var(--line); background: #f6f9f7; }
+    .diff-chip .count { font-weight: 700; font-family: 'DM Mono', monospace; }
+    .diff-chip.new-in  { border-color: #b2d5c8; background: #edf6f2; color: var(--accent); }
+    .diff-chip.dropped { border-color: #f0c4c2; background: #fdf0ef; color: var(--danger); }
+    .diff-chip.upgraded { border-color: #b2d5c8; background: #edf6f2; color: var(--accent); }
+    .diff-chip.downgraded { border-color: #f5dbb5; background: #fef6e8; color: var(--warn); }
+    .diff-tickers { font-size: 12px; color: var(--muted); line-height: 1.8; }
+    .diff-tickers strong { color: var(--text); font-family: 'DM Mono', monospace; font-size: 11px; }
 
     .badge {
       display: inline-flex;
@@ -408,11 +536,57 @@ INDEX_HTML = r"""
       gap: 6px;
     }
 
+    .desc summary::-webkit-details-marker { display: none; }
     .desc summary::before { content: "▶"; font-size: 10px; transition: transform 0.15s; }
     .desc[open] summary::before { transform: rotate(90deg); }
     .desc ul { margin: 10px 0 0; padding-left: 18px; }
     .desc li { margin-bottom: 4px; }
     .desc li strong { color: var(--text); }
+
+    /* Market environment banner */
+    .market-banner {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 18px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      border-left-width: 4px;
+      margin-bottom: 16px;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .market-banner.uptrend {
+      background: #edf6f2;
+      border-color: #b2d5c8;
+      border-left-color: var(--accent);
+    }
+
+    .market-banner.pressure {
+      background: #fef6e8;
+      border-color: #f0d8a0;
+      border-left-color: var(--warn);
+    }
+
+    .market-banner.correction {
+      background: #fdf0ef;
+      border-color: #f0c4c2;
+      border-left-color: var(--danger);
+    }
+
+    .market-banner .mb-icon { font-size: 18px; flex-shrink: 0; }
+
+    .market-banner .mb-state {
+      font-weight: 700;
+      font-size: 14px;
+    }
+
+    .market-banner.uptrend  .mb-state { color: var(--accent); }
+    .market-banner.pressure .mb-state { color: var(--warn); }
+    .market-banner.correction .mb-state { color: var(--danger); }
+
+    .market-banner .mb-desc { color: var(--muted); }
 
     /* Insight bar */
     .insight-bar {
@@ -473,6 +647,127 @@ INDEX_HTML = r"""
       color: var(--muted);
     }
 
+    /* Watchlist panel */
+    .watchlist-panel {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      padding: 16px 18px;
+      margin-bottom: 16px;
+      display: none;
+    }
+
+    .watchlist-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .watchlist-header h3 {
+      margin: 0;
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .watchlist-header .wl-date {
+      font-size: 12px;
+      color: var(--muted);
+      margin-left: auto;
+    }
+
+    .watchlist-groups {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+    }
+
+    @media (max-width: 980px) {
+      .watchlist-groups { grid-template-columns: 1fr; }
+    }
+
+    .wl-group {
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      overflow: hidden;
+    }
+
+    .wl-group-title {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      padding: 7px 12px;
+    }
+
+    .wl-group-title.g-entry { background: #edf6f2; color: #0e5b45; border-bottom: 1px solid #c8e8dc; }
+    .wl-group-title.g-watch { background: #fef6e8; color: var(--warn); border-bottom: 1px solid #f0d8a0; }
+    .wl-group-title.g-list  { background: #f0f0ec; color: var(--muted); border-bottom: 1px solid var(--line); }
+
+    .wl-rows { padding: 4px 0; max-height: 380px; overflow-y: auto; }
+
+    .wl-row {
+      padding: 8px 12px;
+      border-bottom: 1px solid #f4f4f0;
+    }
+
+    .wl-row:last-child { border-bottom: 0; }
+
+    .wl-row-top {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin-bottom: 3px;
+    }
+
+    .wl-ticker {
+      font-family: 'DM Mono', monospace;
+      font-weight: 700;
+      font-size: 13px;
+      letter-spacing: 0.03em;
+      cursor: pointer;
+      color: var(--accent);
+      border-bottom: 1px dotted var(--accent);
+    }
+
+    .wl-name {
+      font-size: 12px;
+      color: var(--muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      flex: 1;
+    }
+
+    .wl-grade {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 20px;
+      height: 20px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 700;
+      background: var(--accent-soft);
+      color: #0e5b45;
+      flex-shrink: 0;
+    }
+
+    .wl-grade.b { background: #eee9d9; color: var(--warn); }
+
+    .wl-comment {
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    .wl-empty {
+      padding: 10px 12px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
     /* Guide accordion */
     .guide-grid {
       display: grid;
@@ -504,14 +799,17 @@ INDEX_HTML = r"""
 
     /* Ticker search */
     .ticker-search {
-      display: flex;
-      gap: 8px;
       background: var(--surface);
       border: 1px solid var(--line);
       border-radius: 8px;
       box-shadow: var(--shadow);
       padding: 12px 14px;
       margin-bottom: 16px;
+    }
+
+    .ticker-search-row {
+      display: flex;
+      gap: 8px;
       align-items: center;
     }
 
@@ -519,20 +817,26 @@ INDEX_HTML = r"""
       font-size: 12px;
       color: var(--muted);
       white-space: nowrap;
-      display: block;
     }
 
     #tickerInput {
       width: 120px;
       min-height: 34px;
       text-transform: uppercase;
-      font-weight: 700;
-      letter-spacing: 0.03em;
+      font-family: 'DM Mono', monospace;
+      font-weight: 500;
+      letter-spacing: 0.05em;
     }
 
     #tickerResult {
-      flex: 1;
       font-size: 13px;
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid var(--line);
+    }
+
+    #tickerResult:empty {
+      display: none;
     }
 
     .tr-name    { font-weight: 650; }
@@ -571,6 +875,192 @@ INDEX_HTML = r"""
 
     .tr-metrics span strong { color: var(--text); }
 
+    .tr-layout {
+      display: flex;
+      gap: 12px;
+      align-items: stretch;
+    }
+
+    .tr-info { flex: 0 0 auto; min-width: 0; max-width: 55%; }
+
+    .tr-inline-charts {
+      display: flex;
+      flex-direction: row;
+      gap: 8px;
+      flex: 1;
+      min-width: 0;
+      padding-top: 2px;
+    }
+
+    .tr-inline-chart-cell {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      min-width: 0;
+      min-height: 90px;
+    }
+
+    .tr-inline-chart-header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      margin-bottom: 3px;
+    }
+
+    .tr-inline-chart-period {
+      font-size: 10px;
+      font-weight: 700;
+      font-family: 'DM Mono', monospace;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+
+    .tr-inline-chart-return {
+      font-size: 11px;
+      font-family: 'DM Mono', monospace;
+    }
+
+    .tr-inline-chart-return.pos { color: var(--accent); }
+    .tr-inline-chart-return.neg { color: var(--danger); }
+
+    .tr-inline-chart-wrap {
+      flex: 1;
+      min-height: 60px;
+    }
+
+    .tr-inline-chart-wrap svg { width: 100%; height: 100%; display: block; overflow: visible; }
+
+    .tr-inline-chart-wrap svg { width: 100%; height: 100%; overflow: visible; }
+
+    /* Chart popup modal */
+    .chart-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.35);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .chart-overlay.open { display: flex; }
+
+    .chart-modal {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+      width: min(860px, calc(100vw - 32px));
+      padding: 20px 22px 18px;
+      position: relative;
+    }
+
+    .chart-modal-header {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      margin-bottom: 4px;
+    }
+
+    .chart-modal-ticker {
+      font-family: 'DM Mono', monospace;
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+    }
+
+    .chart-modal-name {
+      font-size: 13px;
+      color: var(--muted);
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .chart-modal-close {
+      position: absolute;
+      top: 14px;
+      right: 16px;
+      background: none;
+      border: none;
+      font-size: 18px;
+      color: var(--muted);
+      cursor: pointer;
+      padding: 2px 6px;
+      line-height: 1;
+      min-height: unset;
+    }
+
+    .chart-modal-close:hover { color: var(--text); background: none; }
+
+    .chart-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+
+    .chart-cell {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 12px 8px;
+    }
+
+    .chart-cell-header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      margin-bottom: 6px;
+    }
+
+    .chart-cell-period {
+      font-family: 'DM Mono', monospace;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--muted);
+      letter-spacing: 0.05em;
+    }
+
+    .chart-cell-return {
+      font-family: 'DM Mono', monospace;
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .chart-cell-return.pos { color: var(--accent); }
+    .chart-cell-return.neg { color: var(--danger); }
+
+    .chart-svg-wrap {
+      width: 100%;
+      height: 130px;
+    }
+
+    .chart-svg-wrap svg { width: 100%; height: 100%; overflow: visible; }
+
+    .chart-footer {
+      display: flex;
+      justify-content: flex-end;
+    }
+
+    .chart-perplexity-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--accent);
+      text-decoration: none;
+      border: 1px solid var(--accent);
+      border-radius: 6px;
+      padding: 5px 12px;
+      min-height: unset;
+      background: none;
+      cursor: pointer;
+    }
+
+    .chart-perplexity-btn:hover { background: var(--accent-soft); }
+
     @media (max-width: 980px) {
       .controls, .grid, .metrics { grid-template-columns: 1fr; }
       header, .status { flex-direction: column; align-items: stretch; }
@@ -583,18 +1073,19 @@ INDEX_HTML = r"""
   <main class="shell">
     <header>
       <div>
-        <h1>RS Volume Screener</h1>
+        <h1><span class="apex-sub">Alpha Pulse Equity eXplorer</span>APEX</h1>
         <div class="subtle" id="universeLine">Universe loading</div>
       </div>
-      <div style="display:flex;align-items:center;gap:12px">
-        <div class="links" id="fileLinks"></div>
-        <button id="refreshButton" type="button" style="background:none;border:1px solid var(--line);color:var(--text);font-size:13px;padding:6px 14px;min-height:34px">↻ Refresh</button>
+      <div style="display:flex;align-items:center;gap:8px">
+        <button id="refreshButton" type="button" class="btn-ghost">↻ Refresh</button>
+        <button id="runButton" type="button" class="btn-ghost" style="font-weight:600">▶ Run Screener</button>
       </div>
     </header>
 
     <details class="desc">
       <summary>필터링 방식</summary>
       <ul>
+        <li><strong>시장 환경</strong> — SPY·QQQ 기반 4단계 분류: Confirmed Uptrend / Uptrend Under Pressure / Market in Correction. 하락장에서는 후보 출력 시 경고 배너 표시.</li>
         <li><strong>유동성</strong> — 20일 평균 거래대금 ≥ 기준값. 저유동성 종목 제외.</li>
         <li><strong>RS 고점 근접</strong> — SPY 대비 상대강도(RS)가 최근 50일 RS 최고값의 98% 이상.</li>
         <li><strong>RS 20D 양수</strong> — 20일 SPY 대비 RS 변화율 &gt; 0.</li>
@@ -603,7 +1094,11 @@ INDEX_HTML = r"""
         <li><strong>과열 없음</strong> — 종가 ≤ MA20의 125%, 5일 수익률 &lt; 40%, 당일 수익률 &lt; 25%.</li>
         <li><strong>등급 A</strong> — 위 조건 통과 + 거래량 품질(거래량비율 ≥ 1.3배, 양봉, 종가위치 ≥ 60%).</li>
         <li><strong>등급 B</strong> — 위 조건만 통과, 거래량 품질 미충족.</li>
-        <li><strong>점수</strong> — RS 20D(35%) + RS 50D(25%) + 50일 고점 근접도(20%) + 거래량비율(15%) + 종가위치(5%).</li>
+        <li><strong>점수</strong> — RS 20D(25%) + RS 50D(20%) + 섹터 RS(15%) + 50일 고점 근접도(20%) + 거래량비율(15%) + 종가위치(5%) percentile 가중합.</li>
+        <li><strong>Stage</strong> — 돌파 후 경과일 기준: Early Breakout(≤7일) / Trending(≤35일) / Extended(35일+). 조기 돌파 종목이 가장 안전한 구간.</li>
+        <li><strong>Pivot / vs Pivot</strong> — 50일 고점을 피벗 기준가로 사용. vs Pivot이 +5% 초과(⚠)면 추격 위험.</li>
+        <li><strong>Base</strong> — 베이스 기간 변동성 대비 최근 변동성 비율(높을수록 안정적 베이스 후 돌파).</li>
+        <li><strong>Sector 52W</strong> — 섹터 ETF의 52주 고점 대비 현재 위치. 섹터 전체 건강도 파악용.</li>
       </ul>
     </details>
 
@@ -646,9 +1141,11 @@ INDEX_HTML = r"""
     </details>
 
     <div class="ticker-search">
-      <label>티커 검색</label>
-      <input type="text" id="tickerInput" placeholder="예: AAPL" autocomplete="off" spellcheck="false" maxlength="10">
-      <button type="button" id="tickerSearchBtn">조회</button>
+      <div class="ticker-search-row">
+        <label>티커 검색</label>
+        <input type="text" id="tickerInput" placeholder="예: AAPL" autocomplete="off" spellcheck="false" maxlength="10">
+        <button type="button" id="tickerSearchBtn">조회</button>
+      </div>
       <div id="tickerResult"></div>
     </div>
 
@@ -657,9 +1154,23 @@ INDEX_HTML = r"""
       <div id="runMeta" class="subtle"></div>
     </div>
 
+    <div id="marketBanner" style="display:none" class="market-banner">
+      <span class="mb-icon" id="marketBannerIcon"></span>
+      <div>
+        <div class="mb-state" id="marketBannerState"></div>
+        <div class="mb-desc" id="marketBannerDesc"></div>
+      </div>
+    </div>
+
     <section class="metrics" id="metrics"></section>
 
     <div class="insight-bar" id="insightBar"><ul id="insightList"></ul></div>
+
+    <div id="diffSection" style="display:none" class="diff-section">
+      <h3>전일 대비 변경사항 <span id="diffDateLabel" style="font-weight:400;text-transform:none;letter-spacing:0"></span></h3>
+      <div class="diff-chips" id="diffChips"></div>
+      <div class="diff-tickers" id="diffTickers"></div>
+    </div>
 
     <section class="grid">
       <div class="panel">
@@ -672,6 +1183,14 @@ INDEX_HTML = r"""
       </div>
     </section>
 
+    <div class="watchlist-panel" id="watchlistPanel">
+      <div class="watchlist-header">
+        <h3>오늘의 종목 해석</h3>
+        <span class="wl-date" id="watchlistDate"></span>
+      </div>
+      <div class="watchlist-groups" id="watchlistGroups"></div>
+    </div>
+
     <section class="panel">
       <div class="candidate-header">
         <h2>Candidates</h2>
@@ -683,11 +1202,66 @@ INDEX_HTML = r"""
         <select class="sector-select" id="sectorFilter">
           <option value="">전체 섹터</option>
         </select>
+        <div class="mcap-filter">
+          <span>Mkt Cap</span>
+          <div class="mcap-group">
+            <button class="mcap-btn active" data-mcap="all">All<span class="mcap-tooltip">전체</span></button>
+            <button class="mcap-btn" data-mcap="small">Small<span class="mcap-tooltip">< $2B</span></button>
+            <button class="mcap-btn" data-mcap="mid">Mid<span class="mcap-tooltip">$2B – $10B</span></button>
+            <button class="mcap-btn" data-mcap="large">Large<span class="mcap-tooltip">$10B – $200B</span></button>
+            <button class="mcap-btn" data-mcap="mega">Mega<span class="mcap-tooltip">≥ $200B</span></button>
+          </div>
+        </div>
         <span class="candidate-count" id="candidateCount"></span>
       </div>
       <div class="table-wrap" id="candidateTable"></div>
     </section>
   </main>
+
+  <div class="chart-overlay" id="chartOverlay">
+    <div class="chart-modal" id="chartModal">
+      <button class="chart-modal-close" id="chartModalClose">✕</button>
+      <div class="chart-modal-header">
+        <span class="chart-modal-ticker" id="chartModalTicker"></span>
+        <span class="chart-modal-name" id="chartModalName"></span>
+      </div>
+      <div class="chart-grid" id="chartGrid">
+        <div class="chart-cell" id="chartCell-21">
+          <div class="chart-cell-header">
+            <span class="chart-cell-period">1M</span>
+            <span class="chart-cell-return" id="chartReturn-21"></span>
+          </div>
+          <div class="chart-svg-wrap" id="chartSvgWrap-21"></div>
+        </div>
+        <div class="chart-cell" id="chartCell-63">
+          <div class="chart-cell-header">
+            <span class="chart-cell-period">3M</span>
+            <span class="chart-cell-return" id="chartReturn-63"></span>
+          </div>
+          <div class="chart-svg-wrap" id="chartSvgWrap-63"></div>
+        </div>
+        <div class="chart-cell" id="chartCell-126">
+          <div class="chart-cell-header">
+            <span class="chart-cell-period">6M</span>
+            <span class="chart-cell-return" id="chartReturn-126"></span>
+          </div>
+          <div class="chart-svg-wrap" id="chartSvgWrap-126"></div>
+        </div>
+        <div class="chart-cell" id="chartCell-252">
+          <div class="chart-cell-header">
+            <span class="chart-cell-period">1Y</span>
+            <span class="chart-cell-return" id="chartReturn-252"></span>
+          </div>
+          <div class="chart-svg-wrap" id="chartSvgWrap-252"></div>
+        </div>
+      </div>
+      <div class="chart-footer">
+        <a id="chartPerplexityBtn" class="chart-perplexity-btn" target="_blank" rel="noopener">
+          Perplexity에서 보기 ↗
+        </a>
+      </div>
+    </div>
+  </div>
 
   <script>
     const insightBar       = document.getElementById("insightBar");
@@ -696,6 +1270,7 @@ INDEX_HTML = r"""
     const tickerSearchBtn  = document.getElementById("tickerSearchBtn");
     const tickerResult     = document.getElementById("tickerResult");
     const refreshButton    = document.getElementById("refreshButton");
+    const runButton        = document.getElementById("runButton");
     const statusText = document.getElementById("statusText");
     const runMeta = document.getElementById("runMeta");
     const metrics = document.getElementById("metrics");
@@ -704,24 +1279,29 @@ INDEX_HTML = r"""
     const filterFunnel = document.getElementById("filterFunnel");
     const candidateTable = document.getElementById("candidateTable");
     const candidateCount = document.getElementById("candidateCount");
-    const fileLinks = document.getElementById("fileLinks");
     const sectorFilter = document.getElementById("sectorFilter");
 
     const columns = [
-      ["_rank",              "#",          "rank"],
-      ["ticker",             "Ticker",     "text"],
-      ["name",               "Name",       "text"],
-      ["sector",             "Sector",     "text"],
-      ["grade",              "Grade",      "grade"],
-      ["score",              "Score",      "decimal"],
-      ["market_cap",         "Mkt Cap",    "marketcap"],
-      ["rs_spy_20d",         "RS 20D",     "pct"],
-      ["rs_spy_50d",         "RS 50D",     "pct"],
-      ["rs_sector_20d",      "Sector RS",  "pct"],
-      ["close_to_50d_high",  "50D High",   "ratio"],
-      ["volume_ratio",       "Volume",     "ratio"],
-      ["close_position",     "Close Pos",  "ratio"],
-      ["rsi_14",             "RSI",        "number"],
+      ["_diff",                  "",             "diff"],
+      ["_rank",                  "#",            "rank"],
+      ["ticker",                 "Ticker",       "text"],
+      ["name",                   "Name",         "text"],
+      ["sector",                 "Sector",       "text"],
+      ["grade",                  "Grade",        "grade"],
+      ["trend_stage",            "Stage",        "stage"],
+      ["score",                  "Score",        "decimal"],
+      ["market_cap",             "Mkt Cap",      "marketcap"],
+      ["rs_spy_20d",             "RS 20D",       "pct"],
+      ["rs_spy_50d",             "RS 50D",       "pct"],
+      ["rs_sector_20d",          "Sector RS",    "pct"],
+      ["close_to_50d_high",      "50D High",     "ratio"],
+      ["volume_ratio",           "Volume",       "ratio"],
+      ["close_position",         "Close Pos",    "ratio"],
+      ["rsi_14",                 "RSI",          "number"],
+      ["pivot_price",            "Pivot",        "money"],
+      ["pivot_distance",         "vs Pivot",     "pctdist"],
+      ["base_stability",         "Base",         "ratio"],
+      ["sector_etf_to_52w_high", "Sector 52W",   "ratio"],
     ];
 
     // --- State ---
@@ -729,6 +1309,34 @@ INDEX_HTML = r"""
     let sortKey = "score";
     let sortAsc = false;
     let activeGrade = "all";
+
+    // Market cap button filter
+    const mcapRanges = {
+      all:   [0,        Infinity],
+      small: [0,        2e9],
+      mid:   [2e9,      10e9],
+      large: [10e9,     200e9],
+      mega:  [200e9,    Infinity],
+    };
+    let activeMcap = "all";
+
+    function initMcapButtons() {
+      document.querySelectorAll(".mcap-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+          document.querySelectorAll(".mcap-btn").forEach(b => b.classList.remove("active"));
+          btn.classList.add("active");
+          activeMcap = btn.dataset.mcap;
+          applyFilters();
+        });
+      });
+    }
+
+    function resetMcapFromData() {
+      activeMcap = "all";
+      document.querySelectorAll(".mcap-btn").forEach(b => {
+        b.classList.toggle("active", b.dataset.mcap === "all");
+      });
+    }
 
     function escapeHtml(v) {
       return String(v ?? "")
@@ -739,11 +1347,13 @@ INDEX_HTML = r"""
     function formatValue(value, type) {
       if (value === null || value === undefined || (typeof value === "number" && Number.isNaN(value))) return "";
       if (type === "pct")       return `${(value * 100).toFixed(1)}%`;
+      if (type === "pctdist")   return `${value >= 0 ? "+" : ""}${(value * 100).toFixed(1)}%`;
       if (type === "ratio")     return Number(value).toFixed(2);
       if (type === "decimal")   return Number(value).toFixed(3);
       if (type === "number")    return Number(value).toFixed(1);
-      if (type === "money")     return `$${Number(value).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+      if (type === "money")     return `$${Number(value).toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 2 })}`;
       if (type === "rank")      return value;
+      if (type === "stage")     return value || "";
       if (type === "marketcap") {
         const b = value / 1e9;
         return b >= 1000 ? `$${(b / 1000).toFixed(1)}T` : `$${Math.round(b)}B`;
@@ -753,7 +1363,9 @@ INDEX_HTML = r"""
 
     function setBusy(isBusy) {
       refreshButton.disabled = isBusy;
+      runButton.disabled = isBusy;
       refreshButton.textContent = isBusy ? "↻ Loading…" : "↻ Refresh";
+      runButton.textContent = isBusy ? "▶ Running…" : "▶ Run Screener";
     }
 
     async function getJson(url, options = {}) {
@@ -831,12 +1443,155 @@ INDEX_HTML = r"""
       insightBar.style.display = "block";
     }
 
+    // --- Watchlist ---
+    function buildComment(r, group) {
+      const rs20  = r.rs_spy_20d ?? 0;
+      const secRS = r.rs_sector_20d ?? 0;
+      const high  = r.close_to_50d_high ?? 0;
+      const vol   = r.volume_ratio ?? 0;
+      const cp    = r.close_position ?? 0;
+      const ret20 = r.return_20d ?? 0;
+      const isA   = r.grade === "A";
+
+      const parts = [];
+
+      // 워치리스트 A등급: 왜 진입 검토가 아닌지 먼저 명시
+      if (group === "list" && isA) {
+        if (ret20 >= 0.40) {
+          parts.push(`A등급이지만 20일 수익률 ${(ret20*100).toFixed(0)}%로 단기 급등 피로 구간 — 눌림 확인 후 재진입 검토`);
+        } else if (high < 0.97) {
+          parts.push(`A등급이지만 50일 고점의 ${(high*100).toFixed(0)}%로 아직 고점에서 멀어진 상태 — 고점 재접근 시 재분류 예정`);
+        }
+      }
+
+      // RS 강도
+      if (rs20 >= 0.30) parts.push(`RS 20D ${(rs20*100).toFixed(0)}%로 강한 모멘텀`);
+      else parts.push(`RS 20D ${(rs20*100).toFixed(0)}%`);
+
+      // 섹터 내 위치
+      if (secRS >= 0.30) parts.push(`섹터 내 최상위 RS(${(secRS*100).toFixed(0)}%)`);
+      else if (secRS >= 0.15) parts.push(`섹터 RS ${(secRS*100).toFixed(0)}%로 양호`);
+
+      // 고점 근접 (워치리스트 A등급 첫 줄에서 이미 언급했으면 생략)
+      if (!(group === "list" && isA)) {
+        if (high >= 0.99) parts.push("50일 고점 돌파 중");
+        else if (high >= 0.97) parts.push(`50일 고점의 ${(high*100).toFixed(0)}%로 신고점 직전`);
+        else parts.push(`50일 고점의 ${(high*100).toFixed(0)}%`);
+      }
+
+      // 등급 판단 근거
+      if (isA) {
+        parts.push(`거래량 ${vol.toFixed(2)}배, 종가위치 ${(cp*100).toFixed(0)}%로 당일 매수세 확인`);
+      } else {
+        if (vol < 1.3 && cp < 0.6) {
+          parts.push(`거래량 ${vol.toFixed(2)}배·종가위치 ${(cp*100).toFixed(0)}% 모두 미흡 — 추세만 확인된 상태`);
+        } else if (vol < 1.3) {
+          parts.push(`거래량 ${vol.toFixed(2)}배로 평소 수준 — 거래량 확인 후 진입 검토`);
+        } else {
+          parts.push(`종가위치 ${(cp*100).toFixed(0)}%로 장중 밀림 — 내일 종가 위치 재확인 필요`);
+        }
+      }
+
+      // 과열 경고 (워치리스트 A등급 첫 줄에서 이미 언급했으면 생략)
+      if (!(group === "list" && isA && ret20 >= 0.40)) {
+        if (ret20 >= 0.50) parts.push(`20일 수익률 ${(ret20*100).toFixed(0)}%로 단기 급등 구간, 눌림 주의`);
+        else if (ret20 >= 0.35) parts.push(`20일 수익률 ${(ret20*100).toFixed(0)}%로 다소 과열`);
+      }
+
+      return parts.join(". ") + ".";
+    }
+
+    function buildWatchlist(candidates) {
+      function priorityScore(r) {
+        let s = 0;
+        if (r.grade === "A") s += 40;
+        if ((r.close_to_50d_high ?? 0) >= 0.97) s += 25;
+        s += Math.min((r.rs_sector_20d ?? 0) * 100, 20);
+        const ret20 = r.return_20d ?? 0;
+        if (ret20 < 0.20) s += 15;
+        else if (ret20 < 0.40) s += 8;
+        return s;
+      }
+
+      const scored = candidates.map(r => ({ ...r, _ps: priorityScore(r) }))
+        .sort((a, b) => b._ps - a._ps);
+
+      const entry = [], watch = [], list = [];
+
+      for (const r of scored) {
+        const isA      = r.grade === "A";
+        const nearHigh = (r.close_to_50d_high ?? 0) >= 0.97;
+        const ret20ok  = (r.return_20d ?? 0) < 0.40;
+
+        if (isA && nearHigh && ret20ok) {
+          entry.push(r);
+        } else if (!isA && nearHigh && ret20ok) {
+          watch.push(r);
+        } else {
+          list.push(r);
+        }
+      }
+
+      return { entry, watch, list };
+    }
+
+    function renderWatchlistGroup(title, cls, group, rows) {
+      const titleHtml = `<div class="wl-group-title ${cls}">${escapeHtml(title)}</div>`;
+      if (!rows.length) {
+        return `<div class="wl-group">${titleHtml}<div class="wl-empty">해당 종목 없음</div></div>`;
+      }
+      const rowsHtml = rows.map(r => {
+        const gradeCls = r.grade === "B" ? " b" : "";
+        return `<div class="wl-row">
+          <div class="wl-row-top">
+            <span class="wl-grade${gradeCls}">${escapeHtml(r.grade)}</span>
+            <span class="wl-ticker ticker-link" data-ticker="${escapeHtml(r.ticker)}" data-name="${escapeHtml(r.name||"")}">${escapeHtml(r.ticker)}</span>
+            <span class="wl-name">${escapeHtml(r.name || "")}</span>
+          </div>
+          <div class="wl-comment">${escapeHtml(buildComment(r, group))}</div>
+        </div>`;
+      }).join("");
+      return `<div class="wl-group">${titleHtml}<div class="wl-rows">${rowsHtml}</div></div>`;
+    }
+
+    function renderWatchlist(data) {
+      const panel  = document.getElementById("watchlistPanel");
+      const groups = document.getElementById("watchlistGroups");
+      const dateEl = document.getElementById("watchlistDate");
+      const candidates = data.candidates || [];
+      if (!candidates.length) { panel.style.display = "none"; return; }
+
+      const { entry, watch, list } = buildWatchlist(candidates);
+      dateEl.textContent = data.date || "";
+      groups.innerHTML = [
+        renderWatchlistGroup("오늘 진입 검토",   "g-entry", "entry", entry),
+        renderWatchlistGroup("거래량 확인 대기", "g-watch", "watch", watch),
+        renderWatchlistGroup("워치리스트",       "g-list",  "list",  list),
+      ].join("");
+
+      groups.querySelectorAll(".ticker-link").forEach(el => {
+        el.addEventListener("click", () => openChartModal(el.dataset.ticker, el.dataset.name));
+      });
+
+      panel.style.display = "block";
+    }
+
     // --- Filtering & sorting ---
     function applyFilters() {
       let rows = allCandidates;
       if (activeGrade !== "all") rows = rows.filter(r => r.grade === activeGrade);
       const sector = sectorFilter.value;
       if (sector) rows = rows.filter(r => r.sector === sector);
+
+      // Market cap filter
+      if (activeMcap !== "all") {
+        const [capMin, capMax] = mcapRanges[activeMcap];
+        rows = rows.filter(r => {
+          const cap = r.market_cap;
+          if (cap == null) return false;
+          return cap >= capMin && (!isFinite(capMax) || cap < capMax);
+        });
+      }
 
       rows = [...rows].sort((a, b) => {
         let va = a[sortKey], vb = b[sortKey];
@@ -871,7 +1626,7 @@ INDEX_HTML = r"""
         ["Universe",   data.universe_count,        data.ticker_file || ""],
         ["Evaluated",  data.evaluated_count,       `${data.missing_symbols?.length || 0} missing`],
         ["Candidates", data.candidates_count,      `${data.grade_counts?.A || 0} A / ${data.grade_counts?.B || 0} B`],
-        ["Liquidity",  formatValue(data.config?.min_dollar_volume, "marketcap"), "20D average"],
+        ["Liquidity",  (() => { const v = data.config?.min_dollar_volume; if (v == null) return "-"; const m = v / 1e6; return m >= 1000 ? `$${(m/1000).toFixed(1)}B` : `$${Math.round(m)}M`; })(), "20D average"],
       ];
       metrics.innerHTML = items.map(([label, value, note]) => `
         <div class="metric">
@@ -929,7 +1684,19 @@ INDEX_HTML = r"""
         ? `<tr><th>섹터</th><th class="num">전체</th><th class="num">후보</th><th>적중률</th></tr>`
         : `<tr><th>섹터</th><th class="num">종목 수</th></tr>`;
 
-      universeChips.innerHTML = `<table class="sector-table"><thead>${thead}</thead><tbody>${rows}</tbody></table>`;
+      const totalAll  = Object.values(sectorTotals).reduce((s, v) => s + v, 0);
+      const totalCand = Object.values(candBySector).reduce((s, v) => s + v, 0);
+      const totalRate = totalAll > 0 ? (totalCand / totalAll * 100) : 0;
+      const tfoot = hasCandidates
+        ? `<tfoot><tr>
+            <td><strong>합계</strong></td>
+            <td class="num"><strong>${totalAll}</strong></td>
+            <td class="num"><strong>${totalCand}</strong></td>
+            <td><span class="hit-bar"><span style="width:${Math.min(Math.round(totalRate*2),100)}%"></span></span><span class="hit-rate">${totalRate.toFixed(1)}%</span></td>
+           </tr></tfoot>`
+        : `<tfoot><tr><td><strong>합계</strong></td><td class="num"><strong>${totalAll}</strong></td></tr></tfoot>`;
+
+      universeChips.innerHTML = `<table class="sector-table"><thead>${thead}</thead><tbody>${rows}</tbody>${tfoot}</table>`;
     }
 
     const funnelTooltips = {
@@ -979,12 +1746,27 @@ INDEX_HTML = r"""
         `<div class="funnel-params">${params}</div>`;
     }
 
-    function renderFiles(data) {
-      const links = [];
-      if (data.universe_csv)   links.push(`<a href="${escapeHtml(data.universe_csv)}">Universe CSV</a>`);
-      if (data.candidates_csv) links.push(`<a href="${escapeHtml(data.candidates_csv)}">Candidates CSV</a>`);
-      fileLinks.innerHTML = links.join("");
-    }
+    const columnTooltips = {
+      "_rank":                  "점수 기준 순위",
+      "ticker":                 "종목 티커. 클릭하면 차트 팝업",
+      "name":                   "종목명",
+      "sector":                 "GICS 섹터",
+      "grade":                  "A: 추세 + 거래량 모두 확인\nB: 추세만 확인, 거래량 미충족",
+      "trend_stage":            "50일 고점 돌파 후 경과 거래일 기준 단계\n· Early Breakout (≤7일): 가장 안전한 매수 구간\n· Trending (8~35일): 추세 중반, 리스크 다소 증가\n· Extended (36일+): 많이 올라온 상태, 추격 주의\n· Watch: 돌파 이력 없음",
+      "score":                  "RS·거래량·고점 근접도 등을 percentile 가중합한 0~1 점수\n높을수록 현재 장에서 상대적으로 강한 종목",
+      "market_cap":             "시가총액",
+      "rs_spy_20d":             "최근 20일간 SPY 대비 상대강도 변화율\n양수 = 시장보다 더 많이 오름",
+      "rs_spy_50d":             "최근 50일간 SPY 대비 상대강도 변화율\n단기(20D)와 함께 보면 모멘텀 지속성 확인 가능",
+      "rs_sector_20d":          "최근 20일간 섹터 ETF 대비 상대강도 변화율\n섹터 안에서도 특히 강한 종목인지 확인",
+      "close_to_50d_high":      "현재 종가 ÷ 최근 50일 최고가\n1.0에 가까울수록 고점 근처에서 버티는 강한 종목",
+      "volume_ratio":           "당일 거래량 ÷ 20일 평균 거래량\n1.3 이상이면 평소보다 강한 매수세",
+      "close_position":         "당일 범위(고가-저가) 내 종가 위치\n1.0 = 당일 최고가 마감, 0.0 = 최저가 마감",
+      "rsi_14":                 "14일 RSI (상대강도지수)\n70 이상 과매수, 30 이하 과매도 구간",
+      "pivot_price":            "50일 고점을 기준으로 한 매수 기준가(피벗)\n이 가격 부근이 가장 이상적인 매수 타이밍",
+      "pivot_distance":         "현재 종가가 피벗 대비 몇 % 위/아래인지\n0~+5%: 정상 매수 구간\n+5% 초과(⚠): 추격 위험 — 피벗에서 너무 멀어짐",
+      "base_stability":         "돌파 전 베이스 안정성 점수 (0~1)\n높을수록 최근 조용히 쉰 후 돌파 → 신뢰도 높음\n낮을수록 최근 오히려 변동성이 커진 상태",
+      "sector_etf_to_52w_high": "섹터 ETF의 52주 고점 대비 현재 위치\n0.95+: 섹터 자체가 신고점 근처 → 섹터 강세\n0.80 이하: 섹터 전체가 약세, 개별 종목 신뢰도 낮아짐",
+    };
 
     function renderTable(rows) {
       if (!rows || rows.length === 0) {
@@ -992,14 +1774,24 @@ INDEX_HTML = r"""
         return;
       }
       const head = columns.map(([key, label, type]) => {
+        if (type === "diff") return `<th class="diff-badge-cell"></th>`;
         const isNum = ["pct", "ratio", "decimal", "number", "marketcap"].includes(type);
         let cls = isNum ? "num" : type === "rank" ? "rank" : "";
         let sortCls = key === sortKey ? (sortAsc ? " sort-asc" : " sort-desc") : "";
         const arrow = key === sortKey ? (sortAsc ? "↑" : "↓") : "↕";
-        return `<th class="${cls}${sortCls}" data-key="${escapeHtml(key)}">${escapeHtml(label)}<span class="sort-arrow">${arrow}</span></th>`;
+        const tooltip = columnTooltips[key] ? ` title="${escapeHtml(columnTooltips[key])}"` : "";
+        return `<th class="${cls}${sortCls}" data-key="${escapeHtml(key)}"${tooltip}>${escapeHtml(label)}<span class="sort-arrow">${arrow}</span></th>`;
       }).join("");
       const body = rows.map(row => {
         const cells = columns.map(([key, , type]) => {
+          if (type === "diff") {
+            const d = row._diff;
+            if (!d) return `<td class="diff-badge-cell"></td>`;
+            if (d === "new")  return `<td class="diff-badge-cell"><span class="db db-new">NEW</span></td>`;
+            if (d === "up")   return `<td class="diff-badge-cell"><span class="db db-up">↑A</span></td>`;
+            if (d === "down") return `<td class="diff-badge-cell"><span class="db db-down">↓B</span></td>`;
+            return `<td class="diff-badge-cell"></td>`;
+          }
           if (type === "rank") {
             return `<td class="rank">${row[key] ?? ""}</td>`;
           }
@@ -1007,8 +1799,32 @@ INDEX_HTML = r"""
             const grade = row[key] || "";
             return `<td><span class="badge${grade === "B" ? " b" : ""}">${escapeHtml(grade)}</span></td>`;
           }
-          const isNum = ["pct", "ratio", "decimal", "number", "marketcap"].includes(type);
+          if (type === "stage") {
+            const stage = row[key] || "";
+            const stageColors = {
+              "Early Breakout": "color:#0e5b45;background:#edf6f2;border-color:#b2d5c8",
+              "Trending":       "color:#666d63;background:#f0f0ec;border-color:var(--line)",
+              "Extended":       "color:var(--warn);background:#fef6e8;border-color:#f0d8a0",
+              "Watch":          "color:var(--muted);background:#fbfbfa;border-color:var(--line)",
+            };
+            const style = stageColors[stage] || "";
+            return `<td><span style="font-size:11px;padding:2px 7px;border-radius:999px;border:1px solid;white-space:nowrap;${style}">${escapeHtml(stage)}</span></td>`;
+          }
+          if (type === "pctdist") {
+            const v = row[key];
+            if (v === null || v === undefined) return `<td class="num">–</td>`;
+            const pct = (v * 100).toFixed(1);
+            const isChasing = v > 0.05;
+            const color = isChasing ? "color:var(--warn);font-weight:700" : v < 0 ? "color:var(--muted)" : "color:var(--accent)";
+            const prefix = v >= 0 ? "+" : "";
+            const warn = isChasing ? " ⚠" : "";
+            return `<td class="num" style="${color}" title="${isChasing ? "피벗 대비 5% 초과 — 추격 위험" : ""}">${prefix}${pct}%${warn}</td>`;
+          }
+          const isNum = ["pct", "ratio", "decimal", "number", "marketcap", "money"].includes(type);
           const cls = isNum ? "num" : key === "ticker" ? "ticker" : "";
+          if (key === "ticker" && row[key]) {
+            return `<td class="${cls}"><span class="ticker-link" data-ticker="${escapeHtml(row[key])}" data-name="${escapeHtml(row.name || "")}" style="cursor:pointer;border-bottom:1px dotted var(--accent)">${escapeHtml(row[key])}</span></td>`;
+          }
           return `<td class="${cls}">${escapeHtml(formatValue(row[key], type))}</td>`;
         }).join("");
         return `<tr>${cells}</tr>`;
@@ -1030,11 +1846,40 @@ INDEX_HTML = r"""
       });
     }
 
+    function renderMarketBanner(data) {
+      const banner = document.getElementById("marketBanner");
+      const state  = data.market_state || "";
+      if (!state || state === "Unknown") { banner.style.display = "none"; return; }
+
+      const configs = {
+        "Confirmed Uptrend": {
+          cls: "uptrend", icon: "●",
+          desc: "SPY·QQQ 모두 MA50 위 + 상승 중 — 매수 환경 우호적. 후보 종목 정상 출력.",
+        },
+        "Uptrend Under Pressure": {
+          cls: "pressure", icon: "◐",
+          desc: "지수 일부 약화 중 — 추세 훼손 초기. A등급 위주로 검토하고 포지션 크기 축소 권장.",
+        },
+        "Market in Correction": {
+          cls: "correction", icon: "○",
+          desc: "SPY 또는 QQQ가 MA50 아래 — 하락장. 후보 종목은 참고용으로만 활용, 신규 매수 자제.",
+        },
+      };
+      const cfg = configs[state] || { cls: "", icon: "?", desc: state };
+
+      banner.className = `market-banner ${cfg.cls}`;
+      document.getElementById("marketBannerIcon").textContent  = cfg.icon;
+      document.getElementById("marketBannerState").textContent = state;
+      document.getElementById("marketBannerDesc").textContent  = cfg.desc;
+      banner.style.display = "";
+    }
+
     function renderResult(data) {
+      renderMarketBanner(data);
       renderMetrics(data);
       renderFunnel(data);
-      renderFiles(data);
       renderInsight(data);
+      renderWatchlist(data);
       allCandidates = data.candidates || [];
       // score 내림차순으로 순위 부여 (필터/정렬과 무관하게 고정)
       [...allCandidates]
@@ -1042,8 +1887,11 @@ INDEX_HTML = r"""
         .forEach((r, i) => { r._rank = i + 1; });
       renderUniverse(data);  // allCandidates 세팅 후 호출해야 섹터 적중률 계산 가능
       populateSectorOptions();
+      resetMcapFromData();
       applyFilters();
-      runMeta.textContent = data.source === "latest" ? "Loaded latest output" : data.from_cache ? "Cached (today)" : "Fresh download";
+      const srcLabel = data.source === "latest" ? "파일 로드" : data.from_cache ? "캐시 사용" : "신규 다운로드";
+      const runLabel = data.last_run_at ? `마지막 실행 ${escapeHtml(data.last_run_at)}` : "";
+      runMeta.textContent = [srcLabel, runLabel].filter(Boolean).join(" · ");
     }
 
     // --- Ticker search ---
@@ -1137,7 +1985,46 @@ INDEX_HTML = r"""
         body += `<div class="tr-metrics">${metricItems}</div>`;
       }
 
-      tickerResult.innerHTML = `<div>${header}${body}</div>`;
+      const chartsHtml = `
+        <div class="tr-inline-charts" id="trInlineCharts">
+          <div class="tr-inline-chart-cell">
+            <div class="tr-inline-chart-header">
+              <span class="tr-inline-chart-period">1M</span>
+              <span class="tr-inline-chart-return" id="trChartReturn-21"></span>
+            </div>
+            <div class="tr-inline-chart-wrap" id="trChartWrap-21"></div>
+          </div>
+          <div class="tr-inline-chart-cell">
+            <div class="tr-inline-chart-header">
+              <span class="tr-inline-chart-period">3M</span>
+              <span class="tr-inline-chart-return" id="trChartReturn-63"></span>
+            </div>
+            <div class="tr-inline-chart-wrap" id="trChartWrap-63"></div>
+          </div>
+        </div>`;
+
+      tickerResult.innerHTML = `<div class="tr-layout"><div class="tr-info">${header}${body}</div>${chartsHtml}</div>`;
+
+      // Load inline charts
+      [21, 63].forEach(days => {
+        const retEl  = document.getElementById(`trChartReturn-${days}`);
+        const wrapEl = document.getElementById(`trChartWrap-${days}`);
+        retEl.textContent = "…";
+        getJson(`/api/chart?symbol=${encodeURIComponent(d.symbol)}&days=${days}`).then(data => {
+          if (data.error) { retEl.textContent = ""; return; }
+          const prices = data.prices;
+          const ret = prices.length >= 2
+            ? ((prices[prices.length - 1] - prices[0]) / prices[0] * 100)
+            : null;
+          if (ret !== null) {
+            retEl.textContent = (ret >= 0 ? "+" : "") + ret.toFixed(1) + "%";
+            retEl.className = "tr-inline-chart-return " + (ret >= 0 ? "pos" : "neg");
+          } else {
+            retEl.textContent = "";
+          }
+          requestAnimationFrame(() => requestAnimationFrame(() => drawChartSmall(wrapEl, data.dates, prices)));
+        }).catch(() => { retEl.textContent = ""; });
+      });
     }
 
     async function lookupTicker() {
@@ -1167,6 +2054,163 @@ INDEX_HTML = r"""
 
     sectorFilter.addEventListener("change", applyFilters);
 
+    // --- Chart popup ---
+    const chartOverlay   = document.getElementById("chartOverlay");
+    const chartModalClose = document.getElementById("chartModalClose");
+
+    function closeChartModal() {
+      chartOverlay.classList.remove("open");
+    }
+
+    chartModalClose.addEventListener("click", closeChartModal);
+    chartOverlay.addEventListener("click", e => { if (e.target === chartOverlay) closeChartModal(); });
+    document.addEventListener("keydown", e => { if (e.key === "Escape") closeChartModal(); });
+
+    function drawChartSmall(wrapEl, dates, prices) {
+      const W = wrapEl.clientWidth || 150;
+      const H = wrapEl.clientHeight || 80;
+      const pad = { top: 4, right: 6, bottom: 14, left: 28 };
+      const iW = W - pad.left - pad.right;
+      const iH = H - pad.top - pad.bottom;
+
+      const minP = Math.min(...prices);
+      const maxP = Math.max(...prices);
+      const range = maxP - minP || 1;
+
+      const x = i => pad.left + (i / (prices.length - 1)) * iW;
+      const y = v => pad.top + iH - ((v - minP) / range) * iH;
+
+      const pts = prices.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+      const areaBottom = pad.top + iH;
+      const areaPath = `M${x(0).toFixed(1)},${areaBottom} ` +
+        prices.map((v, i) => `L${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ") +
+        ` L${x(prices.length-1).toFixed(1)},${areaBottom} Z`;
+
+      const isUp = prices[prices.length - 1] >= prices[0];
+      const lineColor = isUp ? "var(--accent)" : "var(--danger)";
+      const gradId = "areaGradS_" + Math.random().toString(36).slice(2);
+
+      const yTicks = [minP, maxP].map(v => ({ v, yPx: y(v).toFixed(1) }));
+      const xTicks = [0, prices.length - 1].map(i => ({
+        label: dates[i] ? dates[i].slice(5) : "",
+        xPx: x(i).toFixed(1),
+      }));
+
+      wrapEl.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+        <defs>
+          <linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="${lineColor}" stop-opacity="0.18"/>
+            <stop offset="100%" stop-color="${lineColor}" stop-opacity="0"/>
+          </linearGradient>
+        </defs>
+        <path d="${areaPath}" fill="url(#${gradId})"/>
+        <polyline points="${pts}" fill="none" stroke="${lineColor}" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/>
+        ${yTicks.map(t => `
+          <line x1="${pad.left}" y1="${t.yPx}" x2="${pad.left + iW}" y2="${t.yPx}" stroke="var(--line)" stroke-width="0.8"/>
+          <text x="${pad.left - 4}" y="${t.yPx}" text-anchor="end" dominant-baseline="middle" fill="var(--muted)" font-size="8" font-family="DM Mono,monospace">$${t.v >= 1000 ? (t.v/1000).toFixed(1)+"K" : t.v.toFixed(0)}</text>
+        `).join("")}
+        ${xTicks.map(t => `
+          <text x="${t.xPx}" y="${pad.top + iH + 10}" text-anchor="middle" fill="var(--muted)" font-size="8" font-family="DM Mono,monospace">${t.label}</text>
+        `).join("")}
+      </svg>`;
+    }
+
+    function drawChart(wrapEl, dates, prices) {
+      const W = wrapEl.clientWidth || 380;
+      const H = 130;
+      const pad = { top: 8, right: 10, bottom: 24, left: 40 };
+      const iW = W - pad.left - pad.right;
+      const iH = H - pad.top - pad.bottom;
+
+      const minP = Math.min(...prices);
+      const maxP = Math.max(...prices);
+      const range = maxP - minP || 1;
+
+      const x = i => pad.left + (i / (prices.length - 1)) * iW;
+      const y = v => pad.top + iH - ((v - minP) / range) * iH;
+
+      const pts = prices.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+      const areaBottom = pad.top + iH;
+      const areaPath = `M${x(0).toFixed(1)},${areaBottom} ` +
+        prices.map((v, i) => `L${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ") +
+        ` L${x(prices.length-1).toFixed(1)},${areaBottom} Z`;
+
+      const isUp = prices[prices.length - 1] >= prices[0];
+      const lineColor = isUp ? "var(--accent)" : "var(--danger)";
+      const gradId = "areaGrad_" + Math.random().toString(36).slice(2);
+
+      const yTicks = [minP, minP + range * 0.5, maxP].map(v => ({
+        v, yPx: y(v).toFixed(1)
+      }));
+      const xTickIdxs = [0, Math.floor((prices.length - 1) / 2), prices.length - 1];
+      const xTicks = xTickIdxs.map(i => ({
+        label: dates[i] ? dates[i].slice(5) : "",
+        xPx: x(i).toFixed(1),
+      }));
+
+      wrapEl.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+        <defs>
+          <linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="${lineColor}" stop-opacity="0.15"/>
+            <stop offset="100%" stop-color="${lineColor}" stop-opacity="0"/>
+          </linearGradient>
+        </defs>
+        <path d="${areaPath}" fill="url(#${gradId})"/>
+        <polyline points="${pts}" fill="none" stroke="${lineColor}" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
+        ${yTicks.map(t => `
+          <line x1="${pad.left}" y1="${t.yPx}" x2="${pad.left + iW}" y2="${t.yPx}" stroke="var(--line)" stroke-width="1"/>
+          <text x="${pad.left - 5}" y="${t.yPx}" text-anchor="end" dominant-baseline="middle" fill="var(--muted)" font-size="9" font-family="DM Mono,monospace">$${t.v >= 1000 ? (t.v/1000).toFixed(1)+"K" : t.v.toFixed(0)}</text>
+        `).join("")}
+        ${xTicks.map(t => `
+          <text x="${t.xPx}" y="${pad.top + iH + 14}" text-anchor="middle" fill="var(--muted)" font-size="9" font-family="DM Mono,monospace">${t.label}</text>
+        `).join("")}
+      </svg>`;
+    }
+
+    let chartCurrentTicker = null;
+
+    async function loadChartCell(ticker, days) {
+      const retEl  = document.getElementById(`chartReturn-${days}`);
+      const wrapEl = document.getElementById(`chartSvgWrap-${days}`);
+      retEl.textContent = "…";
+      retEl.className = "chart-cell-return";
+      wrapEl.innerHTML = "";
+      try {
+        const data = await getJson(`/api/chart?symbol=${encodeURIComponent(ticker)}&days=${days}`);
+        if (data.error) { retEl.textContent = data.error; return; }
+        const prices = data.prices;
+        const ret = prices.length >= 2
+          ? ((prices[prices.length - 1] - prices[0]) / prices[0] * 100)
+          : null;
+        if (ret !== null) {
+          retEl.textContent = (ret >= 0 ? "+" : "") + ret.toFixed(1) + "%";
+          retEl.className = "chart-cell-return " + (ret >= 0 ? "pos" : "neg");
+        } else {
+          retEl.textContent = "";
+        }
+        drawChart(wrapEl, data.dates, prices);
+      } catch (err) {
+        retEl.textContent = err.message;
+      }
+    }
+
+    function openChartModal(ticker, name) {
+      chartCurrentTicker = ticker;
+      document.getElementById("chartModalTicker").textContent = ticker;
+      document.getElementById("chartModalName").textContent = name || "";
+      document.getElementById("chartPerplexityBtn").href =
+        `https://www.perplexity.ai/finance/${encodeURIComponent(ticker)}`;
+      chartOverlay.classList.add("open");
+      [21, 63, 126, 252].forEach(days => loadChartCell(ticker, days));
+    }
+
+    // Delegate ticker-link clicks from the table
+    candidateTable.addEventListener("click", e => {
+      const link = e.target.closest(".ticker-link");
+      if (!link) return;
+      openChartModal(link.dataset.ticker, link.dataset.name);
+    });
+
     // --- API calls ---
     async function loadUniverse() {
       try {
@@ -1177,12 +2221,61 @@ INDEX_HTML = r"""
       }
     }
 
+    // --- Diff ---
+    let diffData = null;
+
+    function renderDiff(diff) {
+      diffData = diff;
+      const section = document.getElementById("diffSection");
+      if (!diff || (!diff.new_entries.length && !diff.dropped.length && !diff.upgraded.length && !diff.downgraded.length)) {
+        section.style.display = "none";
+        return;
+      }
+      section.style.display = "";
+      document.getElementById("diffDateLabel").textContent =
+        diff.prev_date ? `${diff.prev_date} → ${diff.curr_date}` : diff.curr_date;
+
+      const chips = [];
+      if (diff.new_entries.length)  chips.push(`<span class="diff-chip new-in"><span class="count">+${diff.new_entries.length}</span> 신규 진입</span>`);
+      if (diff.dropped.length)      chips.push(`<span class="diff-chip dropped"><span class="count">-${diff.dropped.length}</span> 이탈</span>`);
+      if (diff.upgraded.length)     chips.push(`<span class="diff-chip upgraded"><span class="count">${diff.upgraded.length}</span> B→A 상향</span>`);
+      if (diff.downgraded.length)   chips.push(`<span class="diff-chip downgraded"><span class="count">${diff.downgraded.length}</span> A→B 하향</span>`);
+      document.getElementById("diffChips").innerHTML = chips.join("");
+
+      const parts = [];
+      if (diff.new_entries.length)  parts.push(`신규: ${diff.new_entries.map(t => `<strong>${escapeHtml(t)}</strong>`).join(", ")}`);
+      if (diff.dropped.length)      parts.push(`이탈: ${diff.dropped.map(t => `<strong>${escapeHtml(t)}</strong>`).join(", ")}`);
+      if (diff.upgraded.length)     parts.push(`B→A: ${diff.upgraded.map(t => `<strong>${escapeHtml(t)}</strong>`).join(", ")}`);
+      if (diff.downgraded.length)   parts.push(`A→B: ${diff.downgraded.map(t => `<strong>${escapeHtml(t)}</strong>`).join(", ")}`);
+      document.getElementById("diffTickers").innerHTML = parts.join("<br>");
+
+      // apply _diff flags to allCandidates
+      const newSet      = new Set(diff.new_entries);
+      const upgradedSet = new Set(diff.upgraded);
+      const downgradedSet = new Set(diff.downgraded);
+      allCandidates.forEach(r => {
+        if (newSet.has(r.ticker))        r._diff = "new";
+        else if (upgradedSet.has(r.ticker))   r._diff = "up";
+        else if (downgradedSet.has(r.ticker)) r._diff = "down";
+        else r._diff = null;
+      });
+      applyFilters();
+    }
+
+    async function loadDiff() {
+      try {
+        const diff = await getJson("/api/diff");
+        renderDiff(diff);
+      } catch (_) { /* diff 없으면 조용히 무시 */ }
+    }
+
     async function loadLatest() {
       try {
         const data = await getJson("/api/latest");
         if (data.has_result) {
           renderResult(data);
           statusText.innerHTML = `Latest result · <strong>${escapeHtml(data.date || "")}</strong>`;
+          await loadDiff();
         }
       } catch (error) {
         statusText.innerHTML = `<span class="error">${escapeHtml(error.message)}</span>`;
@@ -1198,6 +2291,7 @@ INDEX_HTML = r"""
         if (data.has_result) {
           renderResult(data);
           statusText.innerHTML = `Latest result · <strong>${escapeHtml(data.date || "")}</strong>`;
+          await loadDiff();
         } else {
           statusText.innerHTML = `<span class="error">결과 없음 — main.py를 먼저 실행해 주세요.</span>`;
         }
@@ -1208,7 +2302,30 @@ INDEX_HTML = r"""
       }
     }
 
+    async function runScreener() {
+      setBusy(true);
+      statusText.innerHTML = "스크리닝 실행 중… (약 1~2분 소요)";
+      runMeta.textContent = "";
+      try {
+        const data = await fetch("/api/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        }).then(r => r.json());
+        if (data.error) throw new Error(data.error);
+        renderResult(data);
+        statusText.innerHTML = `스크리닝 완료 · <strong>${escapeHtml(data.date || "")}</strong>`;
+        await loadDiff();
+      } catch (error) {
+        statusText.innerHTML = `<span class="error">${escapeHtml(error.message)}</span>`;
+      } finally {
+        setBusy(false);
+      }
+    }
+
     refreshButton.addEventListener("click", refresh);
+    runButton.addEventListener("click", runScreener);
+    initMcapButtons();
     loadUniverse();
     loadLatest();
   </script>
@@ -1219,7 +2336,7 @@ INDEX_HTML = r"""
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Local RS volume screener dashboard")
-    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8765)
     return parser.parse_args()
 
@@ -1337,7 +2454,11 @@ def response_from_results(
         "market_cap",
         "rs_spy_20d", "rs_spy_50d", "rs_sector_20d",
         "close_to_50d_high", "volume_ratio", "close_position",
-        "rsi_14", "avg_dollar_volume_20d",
+        "rsi_14", "avg_dollar_volume_20d", "return_20d",
+        # 신규 투자 맥락 필드
+        "trend_stage", "pivot_price", "pivot_distance", "chasing_risk",
+        "buy_zone_low", "buy_zone_high", "days_since_breakout",
+        "base_stability", "sector_etf_to_52w_high",
     ]
     date = None
     if "date" in results.columns and not results["date"].dropna().empty:
@@ -1366,7 +2487,22 @@ def response_from_results(
         "universe_csv": output_link(universe_path),
         "candidates_csv": output_link(candidates_path),
         "from_cache": from_cache,
+        "last_run_at": last_run_at(),
     }
+
+
+def last_run_at() -> str | None:
+    log_file = PROJECT_ROOT / "launchd" / "screener.log"
+    if not log_file.exists():
+        return None
+    try:
+        with log_file.open("r") as f:
+            for line in reversed(f.readlines()):
+                if "screener 완료" in line or "screener 실패" in line:
+                    return line.split("===")[1].strip().split(" screener")[0]
+    except Exception:
+        return None
+    return None
 
 
 def latest_output_response() -> dict[str, object]:
@@ -1395,6 +2531,55 @@ def latest_output_response() -> dict[str, object]:
         candidates_path=candidates_path if candidates_path.exists() else None,
         source="latest",
     )
+
+
+def diff_response() -> dict[str, object]:
+    """최근 2개 candidates CSV를 비교해 신규/이탈/등급변경을 반환."""
+    files = sorted(OUTPUT_DIR.glob("screener_candidates_*.csv"))
+    if len(files) < 2:
+        return {"has_diff": False}
+
+    prev_path, curr_path = files[-2], files[-1]
+    prev_date = prev_path.stem.removeprefix("screener_candidates_")
+    curr_date = curr_path.stem.removeprefix("screener_candidates_")
+
+    prev = pd.read_csv(prev_path)[["ticker", "grade"]].set_index("ticker")["grade"]
+    curr = pd.read_csv(curr_path)[["ticker", "grade"]].set_index("ticker")["grade"]
+
+    prev_set, curr_set = set(prev.index), set(curr.index)
+    new_entries = sorted(curr_set - prev_set)
+    dropped     = sorted(prev_set - curr_set)
+    both        = curr_set & prev_set
+    upgraded    = sorted(t for t in both if prev[t] == "B" and curr[t] == "A")
+    downgraded  = sorted(t for t in both if prev[t] == "A" and curr[t] == "B")
+
+    return {
+        "has_diff": True,
+        "prev_date": prev_date,
+        "curr_date": curr_date,
+        "new_entries": new_entries,
+        "dropped": dropped,
+        "upgraded": upgraded,
+        "downgraded": downgraded,
+    }
+
+
+def chart_data(symbol: str, days: int = 63) -> dict[str, object]:
+    symbol = symbol.strip().upper()
+    cache_file = PROJECT_ROOT / _symbol_cache_dir(ScreenerConfig().period) / f"{symbol}.pkl"
+    if not cache_file.exists():
+        return {"error": "캐시 없음 — 스크리너를 먼저 실행해 주세요."}
+    try:
+        with cache_file.open("rb") as f:
+            df = pickle.load(f)
+        if df is None or df.empty or "Close" not in df.columns:
+            return {"error": "데이터 없음"}
+        close = df["Close"].dropna().tail(days)
+        dates = [d.strftime("%Y-%m-%d") if hasattr(d, "strftime") else str(d) for d in close.index]
+        prices = [round(float(v), 2) for v in close.values]
+        return {"symbol": symbol, "dates": dates, "prices": prices}
+    except Exception as exc:
+        return {"error": str(exc)}
 
 
 def ticker_lookup(symbol: str) -> dict[str, object]:
@@ -1496,6 +2681,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/latest":
             self.send_json(latest_output_response())
             return
+        if parsed.path == "/api/diff":
+            self.send_json(diff_response())
+            return
         if parsed.path == "/api/ticker":
             params = parse_qs(parsed.query)
             symbol = (params.get("symbol") or [""])[0]
@@ -1503,6 +2691,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self.send_json({"error": "symbol 파라미터가 필요합니다."}, status=HTTPStatus.BAD_REQUEST)
             else:
                 self.send_json(ticker_lookup(symbol))
+            return
+        if parsed.path == "/api/chart":
+            params = parse_qs(parsed.query)
+            symbol = (params.get("symbol") or [""])[0]
+            if not symbol:
+                self.send_json({"error": "symbol 파라미터가 필요합니다."}, status=HTTPStatus.BAD_REQUEST)
+            else:
+                try:
+                    days = int((params.get("days") or ["63"])[0])
+                except ValueError:
+                    days = 63
+                self.send_json(chart_data(symbol, days=days))
             return
         if parsed.path.startswith("/outputs/"):
             self.send_output_file(parsed.path.removeprefix("/outputs/"))

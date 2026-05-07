@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from io import StringIO
 from pathlib import Path
 
@@ -31,6 +32,16 @@ GICS_ETF_MAP = {
     "Utilities": "XLU",
     "Real Estate": "XLRE",
     "Materials": "XLB",
+}
+
+# yfinance .info가 반환하는 비표준 섹터명 → GICS 표준 표기로 정규화
+YFINANCE_SECTOR_NORMALIZE = {
+    "Technology": "Information Technology",
+    "Healthcare": "Health Care",
+    "Financial Services": "Financials",
+    "Consumer Cyclical": "Consumer Discretionary",
+    "Consumer Defensive": "Consumer Staples",
+    "Basic Materials": "Materials",
 }
 
 WIKIPEDIA_HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; research-bot/1.0)"}
@@ -73,11 +84,12 @@ def fetch_top1000() -> pd.DataFrame:
 
 
 def fetch_sector_map() -> pd.DataFrame:
-    """Wikipedia S&P 500 + S&P 400에서 ticker → (sector, sector_etf) 매핑 수집."""
-    print("Wikipedia에서 S&P 500 / S&P 400 섹터 정보 수집 중...")
+    """Wikipedia S&P 500 + S&P 400 + S&P 600에서 ticker → (sector, sector_etf) 매핑 수집."""
+    print("Wikipedia에서 S&P 500 / S&P 400 / S&P 600 섹터 정보 수집 중...")
     urls = {
         "S&P 500": "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",
         "S&P 400": "https://en.wikipedia.org/wiki/List_of_S%26P_400_companies",
+        "S&P 600": "https://en.wikipedia.org/wiki/List_of_S%26P_600_companies",
     }
     frames = []
     for label, url in urls.items():
@@ -97,10 +109,47 @@ def fetch_sector_map() -> pd.DataFrame:
     return sector_df
 
 
+def fetch_sector_yfinance(tickers: list[str], max_workers: int = 20) -> dict[str, str]:
+    """yfinance .info로 섹터를 병렬 조회. 반환: {ticker: sector}"""
+    print(f"yfinance .info로 Unknown {len(tickers)}개 섹터 보완 중... (workers={max_workers})")
+
+    def _get(ticker: str) -> tuple[str, str]:
+        try:
+            info = yf.Ticker(ticker).info
+            sector = info.get("sector", "") or ""
+            return ticker, YFINANCE_SECTOR_NORMALIZE.get(sector, sector)
+        except Exception:
+            return ticker, ""
+
+    result: dict[str, str] = {}
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futures = {ex.submit(_get, t): t for t in tickers}
+        for i, fut in enumerate(as_completed(futures), 1):
+            ticker, sector = fut.result()
+            result[ticker] = sector
+            if i % 50 == 0:
+                print(f"  {i}/{len(tickers)} 완료...")
+
+    filled = sum(1 for s in result.values() if s)
+    print(f"  섹터 확인: {filled}/{len(tickers)}개")
+    return result
+
+
 def build_universe(top1000: pd.DataFrame, sector_map: pd.DataFrame) -> pd.DataFrame:
     merged = top1000.merge(sector_map[["ticker", "sector", "sector_etf"]], on="ticker", how="left")
     merged["sector"] = merged["sector"].fillna("Unknown")
     merged["sector_etf"] = merged["sector_etf"].fillna("")
+
+    # Wikipedia에서 못 찾은 종목은 yfinance .info로 보완
+    unknown_mask = merged["sector"] == "Unknown"
+    if unknown_mask.any():
+        unknown_tickers = merged.loc[unknown_mask, "ticker"].tolist()
+        yf_sectors = fetch_sector_yfinance(unknown_tickers)
+        for ticker, sector in yf_sectors.items():
+            if sector:
+                idx = merged.index[merged["ticker"] == ticker]
+                merged.loc[idx, "sector"] = sector
+                merged.loc[idx, "sector_etf"] = GICS_ETF_MAP.get(sector, "")
 
     covered = (merged["sector_etf"] != "").sum()
     print(f"\n섹터 ETF 매핑: {covered}/{len(merged)}개 ({covered/len(merged)*100:.1f}%)")

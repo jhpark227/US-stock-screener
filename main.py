@@ -31,7 +31,7 @@ class ScreenerConfig:
     volume_window: int = 20
     atr_window: int = 14
     rsi_window: int = 14
-    min_dollar_volume: float = 50_000_000
+    min_dollar_volume: float = 100_000_000
     rs_near_high_threshold: float = 0.98
     near_50d_high_threshold: float = 0.90
     volume_ratio_min: float = 1.3
@@ -39,6 +39,7 @@ class ScreenerConfig:
     close_position_min: float = 0.6
     max_close_to_ma20: float = 1.25
     max_return_5d: float = 0.40
+    max_return_20d: float = 0.60
     max_daily_return: float = 0.25
     min_history_days: int = 80
     download_batch_size: int = 50
@@ -243,21 +244,31 @@ def safe_latest(series: pd.Series) -> float | bool | pd.Timestamp:
     return value
 
 
-def calculate_market_state(spy: pd.DataFrame, config: ScreenerConfig) -> str:
-    close = spy["Close"]
-    ma50 = close.rolling(config.ma_mid).mean()
-    if len(close.dropna()) < config.ma_mid + config.ma_slope_lookback:
-        return "Unknown"
+def calculate_market_state(spy: pd.DataFrame, qqq: pd.DataFrame, config: ScreenerConfig) -> str:
+    """
+    4단계 시장 환경 분류:
+    - Confirmed Uptrend: SPY+QQQ 모두 MA50 위 + MA50 상승
+    - Uptrend Under Pressure: 한쪽만 MA50 위 또는 MA50 하강
+    - Market in Correction: SPY 또는 QQQ가 MA50 아래
+    - Unknown: 데이터 부족
+    """
+    def _state(frame: pd.DataFrame) -> tuple[bool, bool]:
+        close = frame["Close"]
+        ma50 = close.rolling(config.ma_mid).mean()
+        if len(close.dropna()) < config.ma_mid + config.ma_slope_lookback:
+            return False, False
+        above = close.iloc[-1] > ma50.iloc[-1]
+        rising = ma50.iloc[-1] > ma50.shift(config.ma_slope_lookback).iloc[-1]
+        return bool(above), bool(rising)
 
-    latest_close = close.iloc[-1]
-    latest_ma50 = ma50.iloc[-1]
-    prior_ma50 = ma50.shift(config.ma_slope_lookback).iloc[-1]
+    spy_above, spy_rising = _state(spy)
+    qqq_above, qqq_rising = _state(qqq)
 
-    if latest_close > latest_ma50 and latest_ma50 > prior_ma50:
-        return "Bullish"
-    if latest_close < latest_ma50:
-        return "Weak"
-    return "Neutral"
+    if spy_above and qqq_above and spy_rising and qqq_rising:
+        return "Confirmed Uptrend"
+    if not spy_above or not qqq_above:
+        return "Market in Correction"
+    return "Uptrend Under Pressure"
 
 
 def calculate_rs_features(
@@ -304,10 +315,11 @@ def evaluate_stock(
 
     frame["daily_return"] = close.pct_change()
     frame["return_5d"] = close / close.shift(5) - 1
+    frame["return_20d"] = close / close.shift(20) - 1
     frame["ma20"] = close.rolling(config.ma_short).mean()
     frame["ma50"] = close.rolling(config.ma_mid).mean()
     frame["ma50_rising"] = frame["ma50"] > frame["ma50"].shift(config.ma_slope_lookback)
-    frame["high_50d"] = high.rolling(config.rs_high_window).max()
+    frame["high_50d"] = close.rolling(config.rs_high_window).max()
     frame["close_to_50d_high"] = close / frame["high_50d"]
     frame["avg_volume_20d"] = volume.rolling(config.volume_window).mean()
     frame["volume_ratio"] = volume / frame["avg_volume_20d"]
@@ -326,10 +338,36 @@ def evaluate_stock(
     if sector is not None:
         rs_sector = calculate_rs_features(close, sector["Close"], "rs_sector", config)
         feature_frame = feature_frame.join(rs_sector, how="left")
+        sector_etf_close = sector["Close"]
+        sector_ma50 = sector_etf_close.rolling(config.ma_mid).mean()
+        sector_high_52w = sector_etf_close.rolling(252).max()
+        feature_frame["sector_etf_to_52w_high"] = (sector_etf_close / sector_high_52w).reindex(feature_frame.index)
     else:
         feature_frame["rs_sector_20d"] = np.nan
         feature_frame["rs_sector_50d"] = np.nan
         feature_frame["rs_sector_near_high"] = False
+        feature_frame["sector_etf_to_52w_high"] = np.nan
+
+    # 베이스 안정성: 최근 20일 변동성 대비 10~50일 전 변동성 비교
+    returns = close.pct_change()
+    vol_recent = returns.rolling(20).std()
+    vol_base = returns.rolling(40).std().shift(10)
+    feature_frame["base_stability"] = (vol_base / vol_recent.replace(0, np.nan)).clip(upper=3.0) / 3.0
+
+    # 피벗 포인트: 최근 50일 고점 (VCP/컵 패턴의 돌파 기준가)
+    feature_frame["pivot_price"] = close.rolling(config.rs_high_window).max()
+
+    # 돌파 후 경과일: 종가가 피벗을 처음 넘은 날로부터 몇 거래일 지났는지
+    above_pivot = close >= feature_frame["pivot_price"].shift(1)
+    breakout_day = above_pivot & ~above_pivot.shift(1, fill_value=False)
+    days_since = pd.Series(np.nan, index=close.index)
+    last_bo = None
+    for i, (idx, is_bo) in enumerate(breakout_day.items()):
+        if is_bo:
+            last_bo = i
+        if last_bo is not None:
+            days_since.iloc[i] = i - last_bo
+    feature_frame["days_since_breakout"] = days_since
 
     latest = feature_frame.dropna(subset=["Close", "ma50", "rs_spy_20d", "rs_spy_50d"]).tail(1)
     if latest.empty:
@@ -339,17 +377,19 @@ def evaluate_stock(
     liquidity_ok = row["avg_dollar_volume_20d"] >= config.min_dollar_volume
     rs_near_high = bool(row["rs_spy_near_high"])
     rs_positive = row["rs_spy_20d"] > 0
+    rs_sector_positive = sector is None or row["rs_sector_20d"] > 0
     above_ma50 = row["Close"] > row["ma50"]
     ma50_rising = bool(row["ma50_rising"])
     near_50d_high = row["close_to_50d_high"] >= config.near_50d_high_threshold
     not_overheated = (
         row["Close"] <= row["ma20"] * config.max_close_to_ma20
         and row["return_5d"] < config.max_return_5d
+        and row["return_20d"] < config.max_return_20d
         and row["daily_return"] < config.max_daily_return
     )
     volume_quality = (
         row["volume_ratio"] >= config.volume_ratio_min
-        and row["Close"] > close.shift(1).reindex(feature_frame.index).iloc[-1]
+        and row["Close"] > close.iloc[-2]
         and row["close_position"] >= config.close_position_min
     )
     passed = all(
@@ -357,6 +397,7 @@ def evaluate_stock(
             liquidity_ok,
             rs_near_high,
             rs_positive,
+            rs_sector_positive,
             above_ma50,
             ma50_rising,
             near_50d_high,
@@ -368,6 +409,36 @@ def evaluate_stock(
     if passed:
         grade = "A" if volume_quality else "B"
 
+    pivot = float(row["pivot_price"]) if not pd.isna(row.get("pivot_price", np.nan)) else None
+    current_close = float(row["Close"])
+    pivot_distance = (current_close / pivot - 1) if pivot and pivot > 0 else None
+    # 피벗 대비 5% 초과 시 추격 위험
+    chasing_risk = pivot_distance is not None and pivot_distance > 0.05
+
+    # 매수 구간: 피벗 기준 0~5% 이내
+    if pivot is not None:
+        buy_zone_low = round(pivot, 2)
+        buy_zone_high = round(pivot * 1.05, 2)
+    else:
+        buy_zone_low = None
+        buy_zone_high = None
+
+    days_bo = row.get("days_since_breakout", np.nan)
+    days_since_breakout = int(days_bo) if not pd.isna(days_bo) else None
+
+    # 단계 분류
+    if days_since_breakout is None:
+        trend_stage = "Watch"
+    elif days_since_breakout <= 7:
+        trend_stage = "Early Breakout"
+    elif days_since_breakout <= 35:
+        trend_stage = "Trending"
+    else:
+        trend_stage = "Extended"
+
+    base_stability = float(row["base_stability"]) if not pd.isna(row.get("base_stability", np.nan)) else None
+    sector_etf_to_52w_high = float(row["sector_etf_to_52w_high"]) if not pd.isna(row.get("sector_etf_to_52w_high", np.nan)) else None
+
     return {
         "ticker": ticker,
         "name": meta["name"],
@@ -375,9 +446,10 @@ def evaluate_stock(
         "sector_etf": sector_etf,
         "market_cap": float(meta.get("market_cap") or 0),
         "date": latest.index[-1].date().isoformat(),
-        "close": row["Close"],
+        "close": current_close,
         "daily_return": row["daily_return"],
         "return_5d": row["return_5d"],
+        "return_20d": row["return_20d"],
         "rs_spy_20d": row["rs_spy_20d"],
         "rs_spy_50d": row["rs_spy_50d"],
         "rs_spy_near_high": rs_near_high,
@@ -399,12 +471,23 @@ def evaluate_stock(
         "rsi_14": row["rsi_14"],
         "liquidity_ok": liquidity_ok,
         "rs_positive": rs_positive,
+        "rs_sector_positive": rs_sector_positive,
         "near_50d_high": near_50d_high,
         "volume_quality": volume_quality,
         "not_overheated": not_overheated,
         "passed_hard_filters": passed,
         "grade": grade,
         "market_state": market_state,
+        # 신규 투자 맥락 필드
+        "pivot_price": pivot,
+        "buy_zone_low": buy_zone_low,
+        "buy_zone_high": buy_zone_high,
+        "pivot_distance": pivot_distance,
+        "chasing_risk": chasing_risk,
+        "days_since_breakout": days_since_breakout,
+        "trend_stage": trend_stage,
+        "base_stability": base_stability,
+        "sector_etf_to_52w_high": sector_etf_to_52w_high,
     }
 
 
@@ -421,8 +504,9 @@ def add_scores(results: pd.DataFrame) -> pd.DataFrame:
         return results
 
     scored["score"] = (
-        0.35 * scored["rs_spy_20d"].rank(pct=True)
-        + 0.25 * scored["rs_spy_50d"].rank(pct=True)
+        0.25 * scored["rs_spy_20d"].rank(pct=True)
+        + 0.20 * scored["rs_spy_50d"].rank(pct=True)
+        + 0.15 * scored["rs_sector_20d"].rank(pct=True, na_option="bottom")
         + 0.20 * scored["close_to_50d_high"].rank(pct=True)
         + 0.15 * scored["capped_volume_ratio"].rank(pct=True)
         + 0.05 * scored["close_position"].rank(pct=True)
@@ -472,7 +556,7 @@ def run_screener(
             + ". Check network access or yfinance availability."
         )
 
-    market_state = calculate_market_state(prices["SPY"], config)
+    market_state = calculate_market_state(prices["SPY"], prices["QQQ"], config)
     rows = [
         result
         for _, meta in universe.iterrows()
