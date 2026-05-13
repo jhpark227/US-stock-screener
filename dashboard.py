@@ -1282,7 +1282,6 @@ INDEX_HTML = r"""
       ["name",                   "Name",         "text"],
       ["sector",                 "Sector",       "text"],
       ["grade",                  "Grade",        "grade"],
-      ["trend_stage",            "Stage",        "stage"],
       ["score",                  "Score",        "decimal"],
       ["market_cap",             "Mkt Cap",      "marketcap"],
       ["rs_spy_20d",             "RS 20D",       "pct"],
@@ -1292,8 +1291,8 @@ INDEX_HTML = r"""
       ["volume_ratio",           "Volume",       "ratio"],
       ["close_position",         "Close Pos",    "ratio"],
       ["rsi_14",                 "RSI",          "number"],
-      ["pivot_price",            "Pivot",        "money"],
-      ["pivot_distance",         "vs Pivot",     "pctdist"],
+      ["buy_price",              "Buy Price",    "money"],
+      ["buy_price_basis",        "Basis",        "text"],
       ["base_stability",         "Base",         "ratio"],
       ["sector_etf_to_52w_high", "Sector 52W",   "ratio"],
     ];
@@ -1744,7 +1743,6 @@ INDEX_HTML = r"""
       "name":                   "종목명",
       "sector":                 "GICS 섹터",
       "grade":                  "A: 추세 + 거래량 모두 확인\nB: 추세만 확인, 거래량 미충족",
-      "trend_stage":            "50일 고점 돌파 후 경과 거래일 기준 단계\n· Early Breakout (≤7일): 가장 안전한 매수 구간\n· Trending (8~35일): 추세 중반, 리스크 다소 증가\n· Extended (36일+): 많이 올라온 상태, 추격 주의\n· Watch: 돌파 이력 없음",
       "score":                  "RS·거래량·고점 근접도 등을 percentile 가중합한 0~1 점수\n높을수록 현재 장에서 상대적으로 강한 종목",
       "market_cap":             "시가총액",
       "rs_spy_20d":             "최근 20일간 SPY 대비 상대강도 변화율\n양수 = 시장보다 더 많이 오름",
@@ -1754,9 +1752,9 @@ INDEX_HTML = r"""
       "volume_ratio":           "당일 거래량 ÷ 20일 평균 거래량\n1.3 이상이면 평소보다 강한 매수세",
       "close_position":         "당일 범위(고가-저가) 내 종가 위치\n1.0 = 당일 최고가 마감, 0.0 = 최저가 마감",
       "rsi_14":                 "14일 RSI (상대강도지수)\n70 이상 과매수, 30 이하 과매도 구간",
-      "pivot_price":            "50일 고점을 기준으로 한 매수 기준가(피벗)\n이 가격 부근이 가장 이상적인 매수 타이밍",
-      "pivot_distance":         "현재 종가가 피벗 대비 몇 % 위/아래인지\n0~+5%: 정상 매수 구간\n+5% 초과(⚠): 추격 위험 — 피벗에서 너무 멀어짐",
-      "base_stability":         "돌파 전 베이스 안정성 점수 (0~1)\n높을수록 최근 조용히 쉰 후 돌파 → 신뢰도 높음\n낮을수록 최근 오히려 변동성이 커진 상태",
+      "buy_price":              "MA 눌림목 기준 매수기준가\nMA20 위에 있으면 MA20×1.01, 아니면 MA50×1.01",
+      "buy_price_basis":        "매수기준가 산출 기준 이동평균선 (MA20 / MA50)",
+      "base_stability":         "베이스 안정성 점수 (0~1)\n높을수록 최근 조용히 쉰 후 돌파 → 신뢰도 높음\n낮을수록 최근 오히려 변동성이 커진 상태",
       "sector_etf_to_52w_high": "섹터 ETF의 52주 고점 대비 현재 위치\n0.95+: 섹터 자체가 신고점 근처 → 섹터 강세\n0.80 이하: 섹터 전체가 약세, 개별 종목 신뢰도 낮아짐",
     };
 
@@ -2434,9 +2432,7 @@ def response_from_results(
         "rs_spy_20d", "rs_spy_50d", "rs_sector_20d",
         "close_to_50d_high", "volume_ratio", "volume_trend", "close_position",
         "rsi_14", "avg_dollar_volume_20d", "return_20d",
-        # 신규 투자 맥락 필드
-        "trend_stage", "pivot_price", "pivot_distance", "chasing_risk",
-        "buy_zone_low", "buy_zone_high", "days_since_breakout",
+        "buy_price", "buy_price_basis",
         "base_stability", "sector_etf_to_52w_high",
     ]
     date = None

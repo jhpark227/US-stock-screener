@@ -356,21 +356,6 @@ def evaluate_stock(
     vol_base = returns.rolling(40).std().shift(10)
     feature_frame["base_stability"] = (vol_base / vol_recent.replace(0, np.nan)).clip(upper=3.0) / 3.0
 
-    # 피벗 포인트: 최근 50일 고점 (VCP/컵 패턴의 돌파 기준가)
-    feature_frame["pivot_price"] = close.rolling(config.rs_high_window).max()
-
-    # 돌파 후 경과일: 종가가 피벗을 처음 넘은 날로부터 몇 거래일 지났는지
-    above_pivot = close >= feature_frame["pivot_price"].shift(1)
-    breakout_day = above_pivot & ~above_pivot.shift(1, fill_value=False)
-    days_since = pd.Series(np.nan, index=close.index)
-    last_bo = None
-    for i, (idx, is_bo) in enumerate(breakout_day.items()):
-        if is_bo:
-            last_bo = i
-        if last_bo is not None:
-            days_since.iloc[i] = i - last_bo
-    feature_frame["days_since_breakout"] = days_since
-
     latest = feature_frame.dropna(subset=["Close", "ma50", "rs_spy_20d", "rs_spy_50d"]).tail(1)
     if latest.empty:
         return None
@@ -410,32 +395,20 @@ def evaluate_stock(
     if passed:
         grade = "A" if volume_quality else "B"
 
-    pivot = float(row["pivot_price"]) if not pd.isna(row.get("pivot_price", np.nan)) else None
     current_close = float(row["Close"])
-    pivot_distance = (current_close / pivot - 1) if pivot and pivot > 0 else None
-    # 피벗 대비 5% 초과 시 추격 위험
-    chasing_risk = pivot_distance is not None and pivot_distance > 0.05
+    ma20_val = float(row["ma20"]) if not pd.isna(row.get("ma20", np.nan)) else None
+    ma50_val = float(row["ma50"]) if not pd.isna(row.get("ma50", np.nan)) else None
 
-    # 매수 구간: 피벗 기준 0~5% 이내
-    if pivot is not None:
-        buy_zone_low = round(pivot, 2)
-        buy_zone_high = round(pivot * 1.05, 2)
+    # 매수기준가: MA20 위에 있으면 MA20*1.01, 아니면 MA50*1.01
+    if ma20_val is not None and current_close > ma20_val:
+        buy_price = round(ma20_val * 1.01, 2)
+        buy_price_basis = "MA20"
+    elif ma50_val is not None:
+        buy_price = round(ma50_val * 1.01, 2)
+        buy_price_basis = "MA50"
     else:
-        buy_zone_low = None
-        buy_zone_high = None
-
-    days_bo = row.get("days_since_breakout", np.nan)
-    days_since_breakout = int(days_bo) if not pd.isna(days_bo) else None
-
-    # 단계 분류
-    if days_since_breakout is None:
-        trend_stage = "Watch"
-    elif days_since_breakout <= 7:
-        trend_stage = "Early Breakout"
-    elif days_since_breakout <= 35:
-        trend_stage = "Trending"
-    else:
-        trend_stage = "Extended"
+        buy_price = None
+        buy_price_basis = None
 
     base_stability = float(row["base_stability"]) if not pd.isna(row.get("base_stability", np.nan)) else None
     sector_etf_to_52w_high = float(row["sector_etf_to_52w_high"]) if not pd.isna(row.get("sector_etf_to_52w_high", np.nan)) else None
@@ -480,14 +453,8 @@ def evaluate_stock(
         "passed_hard_filters": passed,
         "grade": grade,
         "market_state": market_state,
-        # 신규 투자 맥락 필드
-        "pivot_price": pivot,
-        "buy_zone_low": buy_zone_low,
-        "buy_zone_high": buy_zone_high,
-        "pivot_distance": pivot_distance,
-        "chasing_risk": chasing_risk,
-        "days_since_breakout": days_since_breakout,
-        "trend_stage": trend_stage,
+        "buy_price": buy_price,
+        "buy_price_basis": buy_price_basis,
         "base_stability": base_stability,
         "sector_etf_to_52w_high": sector_etf_to_52w_high,
     }
