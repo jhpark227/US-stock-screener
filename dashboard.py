@@ -460,6 +460,7 @@ INDEX_HTML = r"""
     tfoot tr { border-top: 2px solid var(--border); background: #f6f9f7; }
 
     .num { text-align: right; font-variant-numeric: tabular-nums; font-family: 'DM Mono', monospace; font-size: 13px; }
+    .center { text-align: center; font-size: 12px; }
     .rank { text-align: right; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; font-family: 'DM Mono', monospace; width: 32px; }
     .ticker { font-weight: 700; font-family: 'DM Mono', monospace; letter-spacing: 0.02em; }
 
@@ -1088,9 +1089,10 @@ INDEX_HTML = r"""
         <li><strong>시장 환경</strong> — SPY·QQQ 기반 4단계 분류: Confirmed Uptrend / Uptrend Under Pressure / Market in Correction. 하락장에서는 후보 출력 시 경고 배너 표시.</li>
         <li><strong>유동성</strong> — 20일 평균 거래대금 ≥ 기준값. 저유동성 종목 제외.</li>
         <li><strong>RS 20D 양수</strong> — 20일 SPY 대비 RS 변화율 &gt; 0. 시장 수익률을 상회하는 종목만 선별.</li>
-        <li><strong>MA50 위 + 상승</strong> — 종가 &gt; 50일 이동평균, MA50이 10일 전보다 높음.</li>
+        <li><strong>MA60 위 + 상승</strong> — 종가 &gt; 60일 이동평균, MA60이 10일 전보다 높음.</li>
+        <li><strong>추세 구조</strong> — MA20 &gt; MA60 &gt; MA120 정배열 또는 최근 5일 내 MA20↑MA60 골든크로스(MA60 상승 중). 회복 초기 종목도 통과.</li>
         <li><strong>과열 없음</strong> — 종가 ≤ MA20의 125%, 5일 수익률 &lt; 40%, 당일 수익률 &lt; 25%.</li>
-        <li><strong>등급 A</strong> — 위 조건 통과 + 거래량 품질(최근 5일 평균 거래량 ≥ 20일 평균의 1.3배 + 종가위치 ≥ 50%).</li>
+        <li><strong>등급 A</strong> — 위 조건 통과 + 거래량 품질(최근 10일 중 누적일(가격↑+거래량↑) ≥ 3 AND 분산일(가격↓+거래량↑) ≤ 1).</li>
         <li><strong>등급 B</strong> — 위 조건만 통과, 거래량 품질 미충족.</li>
         <li><strong>점수</strong> — RS 50D(25%) + RS 20D(20%) + RS 가속도(15%) + 섹터 RS(15%) + 50일 고점 근접도(15%) + 거래량비율(10%) percentile 가중합. 전체 종목 대상으로 계산되므로 탈락 종목도 상대 순위 파악 가능.</li>
         <li><strong>Stage</strong> — 돌파 후 경과일 기준: Early Breakout(≤7일) / Trending(≤35일) / Extended(35일+). 조기 돌파 종목이 가장 안전한 구간.</li>
@@ -1112,8 +1114,16 @@ INDEX_HTML = r"""
           <dd>각각 최근 20일·50일 동안 SPY 대비 상대강도 변화율입니다. 단기(20D)는 최근 모멘텀, 중기(50D)는 추세의 지속성을 봅니다. 둘 다 양수면 단·중기 모두 시장 대비 강한 흐름.</dd>
         </div>
         <div class="guide-term">
-          <dt>MA50 위 + 상승</dt>
-          <dd>50일 이동평균선(최근 50일 평균 주가)보다 현재 주가가 위에 있고, 그 평균선 자체도 10일 전보다 높아진 상태입니다. 단순히 평균 위에 있는 게 아니라 추세 자체가 위를 향하고 있다는 의미입니다.</dd>
+          <dt>MA60 위 + 상승 + 추세 구조</dt>
+          <dd>60일 이동평균선(최근 60일 평균 주가)보다 현재 주가가 위에 있고, 그 평균선 자체도 10일 전보다 높아진 상태입니다. 추가로 MA20 &gt; MA60 &gt; MA120 정배열이거나, 최근 5일 내 MA20이 MA60을 돌파(골든크로스)했어야 합니다. 단순히 평균 위에 있는 게 아니라 단·중·장기 추세가 모두 위를 향하고 있다는 의미입니다.</dd>
+        </div>
+        <div class="guide-term">
+          <dt>가격-거래량 4분면 (P/V)</dt>
+          <dd>당일 가격과 거래량 방향을 조합한 신호입니다. ↑+V(누적/Accumulation): 가격↑+거래량 평균 초과 → 가장 건강한 매수세. ↑–V(약한 상승): 가격↑+거래량 부족 → 신뢰도 낮음. ↓+V(분산/Distribution): 가격↓+거래량 초과 → 기관 매도 경고. ↓–V(소강/Dry-up): 가격↓+거래량 부족 → 조정 시 정상.</dd>
+        </div>
+        <div class="guide-term">
+          <dt>거래량 강도 (Vol Str)</dt>
+          <dd>당일 거래량의 20일 평균 대비 배수입니다. 1.5x 이상은 "관심", 2.0x 이상은 "주목", 5.0x 이상은 "확신" 신호로 분류합니다. 정배열 + 누적 + 확신 거래량이 결합되면 강한 매수 시점.</dd>
         </div>
         <div class="guide-term">
           <dt>과열 없음</dt>
@@ -1288,7 +1298,12 @@ INDEX_HTML = r"""
       ["rs_spy_50d",             "RS 50D",       "pct"],
       ["rs_sector_20d",          "Sector RS",    "pct"],
       ["close_to_50d_high",      "50D High",     "ratio"],
-      ["volume_ratio",           "Volume",       "ratio"],
+      ["ma_aligned",             "정배열",       "flag"],
+      ["golden_cross_recent",    "GC",           "flag"],
+      ["vp_signal",              "P/V",          "vp"],
+      ["volume_strength",        "Vol Str",      "vstr"],
+      ["accumulation_days_10d",  "Acc 10d",      "number"],
+      ["distribution_days_10d",  "Dist 10d",     "number"],
       ["close_position",         "Close Pos",    "ratio"],
       ["rsi_14",                 "RSI",          "number"],
       ["buy_price",              "Buy Price",    "money"],
@@ -1343,10 +1358,19 @@ INDEX_HTML = r"""
       if (type === "pctdist")   return `${value >= 0 ? "+" : ""}${(value * 100).toFixed(1)}%`;
       if (type === "ratio")     return Number(value).toFixed(2);
       if (type === "decimal")   return Number(value).toFixed(3);
-      if (type === "number")    return Number(value).toFixed(1);
+      if (type === "number")    return Number.isInteger(Number(value)) ? String(Number(value)) : Number(value).toFixed(1);
       if (type === "money")     return `$${Number(value).toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 2 })}`;
       if (type === "rank")      return value;
       if (type === "stage")     return value || "";
+      if (type === "flag")      return value ? "✓" : "";
+      if (type === "vp") {
+        const labels = { accumulation: "↑+V", weak_rally: "↑–V", distribution: "↓+V", dry_up: "↓–V" };
+        return labels[value] || value || "";
+      }
+      if (type === "vstr") {
+        const labels = { conviction: "확신", attention: "주목", interest: "관심", normal: "" };
+        return labels[value] ?? value ?? "";
+      }
       if (type === "marketcap") {
         const b = value / 1e9;
         return b >= 1000 ? `$${(b / 1000).toFixed(1)}T` : `$${Math.round(b)}B`;
@@ -1697,10 +1721,11 @@ INDEX_HTML = r"""
       "Evaluated":      "데이터 충분한 종목",
       "Liquidity":      "거래대금 기준 충족",
       "RS 20D > 0":     "20일 SPY 대비 RS 양수 — 시장 수익률 상회",
-      "Close > MA50":   "종가가 MA50 위",
-      "MA50 Rising":    "MA50 상승 중",
+      "Close > MA60":   "종가가 MA60 위",
+      "MA60 Rising":    "MA60 상승 중",
+      "Trend Struct":   "MA20>MA60>MA120 정배열 또는 최근 5일 내 골든크로스(MA20↑MA60, MA60 상승 중)",
       "Not Overheated": "과열·급등 없음",
-      "A Grade":        "거래량 품질 충족",
+      "A Grade":        "최근 10일 누적일 ≥ 3 + 분산일 ≤ 1 (거래량 품질)",
     };
 
     function renderFunnel(data) {
@@ -1727,8 +1752,8 @@ INDEX_HTML = r"""
 
       const cfg = data.config || {};
       const params = [
-        `Volume ≥ ${(cfg.volume_ratio_min ?? 1.3).toFixed(1)}x (A등급)`,
-        `Close Pos ≥ ${Math.round((cfg.close_position_min ?? 0.6) * 100)}% (A등급)`,
+        `A등급: 누적일 ≥ 3 · 분산일 ≤ 1 (최근 10일)`,
+        `추세: MA20>MA60>MA120 정배열 OR 최근 5일 골든크로스`,
         `스코어: RS50D 25% · RS20D 20% · RS가속 15% · 섹터RS 15% · 50D고점 15% · 거래량 10%`,
       ].map(t => `<span class="chip">${escapeHtml(t)}</span>`).join("");
 
@@ -1749,11 +1774,16 @@ INDEX_HTML = r"""
       "rs_spy_50d":             "최근 50일간 SPY 대비 상대강도 변화율\n단기(20D)와 함께 보면 모멘텀 지속성 확인 가능",
       "rs_sector_20d":          "최근 20일간 섹터 ETF 대비 상대강도 변화율\n섹터 안에서도 특히 강한 종목인지 확인",
       "close_to_50d_high":      "현재 종가 ÷ 최근 50일 최고가\n1.0에 가까울수록 고점 근처에서 버티는 강한 종목",
-      "volume_ratio":           "당일 거래량 ÷ 20일 평균 거래량\n1.3 이상이면 평소보다 강한 매수세",
+      "ma_aligned":             "MA20 > MA60 > MA120 정배열 여부\n✓ = 단·중·장기 이동평균선이 모두 우상향 순서로 정렬",
+      "golden_cross_recent":    "최근 5일 내 MA20이 MA60을 상향돌파 (MA60 상승 중)\n추세 전환 초기 신호 — 정배열은 아니어도 통과",
+      "vp_signal":              "당일 가격-거래량 4분면 신호\n↑+V: 가격 상승 + 거래량 평균 초과 (누적/Accumulation)\n↑–V: 가격 상승 + 거래량 평균 이하 (약한 상승)\n↓+V: 가격 하락 + 거래량 평균 초과 (분산/Distribution)\n↓–V: 가격 하락 + 거래량 평균 이하 (소강/Dry-up)",
+      "volume_strength":        "당일 거래량 강도 (20일 평균 대비)\n관심: 1.5x 이상 / 주목: 2.0x 이상 / 확신: 5.0x 이상",
+      "accumulation_days_10d":  "최근 10일 중 누적(가격↑+거래량↑) 일수\n3일 이상 + 분산 1일 이하면 거래량 품질 (A등급) 충족",
+      "distribution_days_10d":  "최근 10일 중 분산(가격↓+거래량↑) 일수\n2일 이상이면 매도 압력 — 거래량 품질 미충족 (B등급)",
       "close_position":         "당일 범위(고가-저가) 내 종가 위치\n1.0 = 당일 최고가 마감, 0.0 = 최저가 마감",
       "rsi_14":                 "14일 RSI (상대강도지수)\n70 이상 과매수, 30 이하 과매도 구간",
-      "buy_price":              "MA 눌림목 기준 매수기준가\nMA20 위에 있으면 MA20×1.01, 아니면 MA50×1.01",
-      "buy_price_basis":        "매수기준가 산출 기준 이동평균선 (MA20 / MA50)",
+      "buy_price":              "MA 눌림목 기준 매수기준가\nMA20 위에 있으면 MA20×1.01, 아니면 MA60×1.01",
+      "buy_price_basis":        "매수기준가 산출 기준 이동평균선 (MA20 / MA60)",
       "base_stability":         "베이스 안정성 점수 (0~1)\n높을수록 최근 조용히 쉰 후 돌파 → 신뢰도 높음\n낮을수록 최근 오히려 변동성이 커진 상태",
       "sector_etf_to_52w_high": "섹터 ETF의 52주 고점 대비 현재 위치\n0.95+: 섹터 자체가 신고점 근처 → 섹터 강세\n0.80 이하: 섹터 전체가 약세, 개별 종목 신뢰도 낮아짐",
     };
@@ -1766,7 +1796,8 @@ INDEX_HTML = r"""
       const head = columns.map(([key, label, type]) => {
         if (type === "diff") return `<th class="diff-badge-cell"></th>`;
         const isNum = ["pct", "ratio", "decimal", "number", "marketcap"].includes(type);
-        let cls = isNum ? "num" : type === "rank" ? "rank" : "";
+        const isCenter = ["flag", "vp", "vstr"].includes(type);
+        let cls = isNum ? "num" : isCenter ? "center" : type === "rank" ? "rank" : "";
         let sortCls = key === sortKey ? (sortAsc ? " sort-asc" : " sort-desc") : "";
         const arrow = key === sortKey ? (sortAsc ? "↑" : "↓") : "↕";
         const tooltip = columnTooltips[key] ? ` title="${escapeHtml(columnTooltips[key])}"` : "";
@@ -1811,9 +1842,36 @@ INDEX_HTML = r"""
             return `<td class="num" style="${color}" title="${isChasing ? "피벗 대비 5% 초과 — 추격 위험" : ""}">${prefix}${pct}%${warn}</td>`;
           }
           const isNum = ["pct", "ratio", "decimal", "number", "marketcap", "money"].includes(type);
-          const cls = isNum ? "num" : key === "ticker" ? "ticker" : "";
+          const isCenter = ["flag", "vp", "vstr"].includes(type);
+          const cls = isNum ? "num" : isCenter ? "center" : key === "ticker" ? "ticker" : "";
           if (key === "ticker" && row[key]) {
             return `<td class="${cls}"><span class="ticker-link" data-ticker="${escapeHtml(row[key])}" data-name="${escapeHtml(row.name || "")}" style="cursor:pointer;border-bottom:1px dotted var(--accent)">${escapeHtml(row[key])}</span></td>`;
+          }
+          if (type === "vp") {
+            const v = row[key];
+            const colors = {
+              accumulation: "color:var(--accent);font-weight:600",
+              weak_rally:   "color:var(--muted)",
+              distribution: "color:var(--danger);font-weight:600",
+              dry_up:       "color:var(--muted)",
+            };
+            const style = colors[v] || "";
+            return `<td class="${cls}" style="${style}">${escapeHtml(formatValue(v, type))}</td>`;
+          }
+          if (type === "vstr") {
+            const v = row[key];
+            const colors = {
+              conviction: "color:var(--danger);font-weight:700",
+              attention:  "color:var(--warn);font-weight:600",
+              interest:   "color:var(--accent)",
+            };
+            const style = colors[v] || "color:var(--muted)";
+            return `<td class="${cls}" style="${style}">${escapeHtml(formatValue(v, type))}</td>`;
+          }
+          if (type === "flag") {
+            const v = row[key];
+            const style = v ? "color:var(--accent);font-weight:700" : "color:var(--muted)";
+            return `<td class="${cls}" style="${style}">${escapeHtml(formatValue(v, type))}</td>`;
           }
           return `<td class="${cls}">${escapeHtml(formatValue(row[key], type))}</td>`;
         }).join("");
@@ -1844,7 +1902,7 @@ INDEX_HTML = r"""
       const configs = {
         "Confirmed Uptrend": {
           cls: "uptrend", icon: "●",
-          desc: "SPY·QQQ 모두 MA50 위 + 상승 중 — 매수 환경 우호적. 후보 종목 정상 출력.",
+          desc: "SPY·QQQ 모두 MA60 위 + 상승 중 — 매수 환경 우호적. 후보 종목 정상 출력.",
         },
         "Uptrend Under Pressure": {
           cls: "pressure", icon: "◐",
@@ -1852,7 +1910,7 @@ INDEX_HTML = r"""
         },
         "Market in Correction": {
           cls: "correction", icon: "○",
-          desc: "SPY 또는 QQQ가 MA50 아래 — 하락장. 후보 종목은 참고용으로만 활용, 신규 매수 자제.",
+          desc: "SPY 또는 QQQ가 MA60 아래 — 하락장. 후보 종목은 참고용으로만 활용, 신규 매수 자제.",
         },
       };
       const cfg = configs[state] || { cls: "", icon: "?", desc: state };
@@ -1888,8 +1946,10 @@ INDEX_HTML = r"""
     const filterLabels = {
       "liquidity_ok":        "유동성",
       "rs_positive":         "RS 20D > 0",
-      "above_ma50":          "MA50 위",
-      "ma50_rising":         "MA50 상승",
+      "above_ma60":          "MA60 위",
+      "ma60_rising":         "MA60 상승",
+      "ma_aligned":          "정배열 (20>60>120)",
+      "golden_cross_recent": "최근 골든크로스",
       "not_overheated":      "과열 없음",
       "passed_hard_filters": "하드 필터 통과",
       "volume_quality":      "거래량 품질 (A등급)",
@@ -1898,11 +1958,13 @@ INDEX_HTML = r"""
     const filterFailReasons = {
       "liquidity_ok":        (m) => `20일 평균 거래대금이 기준 미달 — 유동성이 낮아 제외됩니다.`,
       "rs_positive":         (m) => `최근 20일간 SPY 대비 상대강도(RS)가 마이너스 — 시장 전체보다 더 많이 하락했습니다.`,
-      "above_ma50":          (m) => `현재 주가가 50일 이동평균선 아래 — 중기 추세가 하락 방향입니다.`,
-      "ma50_rising":         (m) => `50일 이동평균선이 10일 전보다 낮아짐 — 평균선 자체가 하향 중이어서 추세 약화 신호입니다.`,
+      "above_ma60":          (m) => `현재 주가가 60일 이동평균선 아래 — 중기 추세가 하락 방향입니다.`,
+      "ma60_rising":         (m) => `60일 이동평균선이 10일 전보다 낮아짐 — 평균선 자체가 하향 중이어서 추세 약화 신호입니다.`,
+      "ma_aligned":          (m) => `MA20 > MA60 > MA120 정배열이 아니고, 최근 5일 내 골든크로스도 없습니다 — 추세 구조가 아직 형성되지 않았습니다.`,
+      "golden_cross_recent": (m) => `최근 5일 내 MA20이 MA60을 상향돌파한 골든크로스가 없습니다 (정배열 종목은 통과).`,
       "not_overheated":      (m) => `단기 급등 감지 — MA20 대비 125% 초과이거나, 5일 수익률 40% 이상이거나, 당일 수익률 25% 이상입니다. 추격 매수 위험이 높은 구간입니다.`,
       "passed_hard_filters": (m) => `위 필터 중 하나 이상 탈락 — 최종 후보군에 포함되지 않았습니다.`,
-      "volume_quality":      (m) => `거래량 품질 미충족 — 최근 5일 평균 거래량이 20일 평균의 1.3배 미만이거나, 종가위치가 당일 범위 50% 미만입니다. B등급으로 분류됩니다.`,
+      "volume_quality":      (m) => `거래량 품질 미충족 — 최근 10일 중 누적일(가격↑+거래량↑)이 3일 미만이거나, 분산일(가격↓+거래량↑)이 2일 이상입니다. B등급으로 분류됩니다.`,
     };
 
     function renderTickerResult(d) {
@@ -1928,7 +1990,7 @@ INDEX_HTML = r"""
       if (!hasResult) {
         body = `<div style="color:var(--muted);font-size:12px;margin-top:6px">스크리너 결과가 없습니다. Run Screener를 먼저 실행해 주세요.</div>`;
       } else {
-        const filterKeys = ["liquidity_ok","rs_positive","above_ma50","ma50_rising","not_overheated","passed_hard_filters","volume_quality"];
+        const filterKeys = ["liquidity_ok","rs_positive","above_ma60","ma60_rising","ma_aligned","golden_cross_recent","not_overheated","passed_hard_filters","volume_quality"];
         const chips = filterKeys.map(key => {
           const val = filters[key];
           if (val === null || val === undefined) return "";
@@ -2373,8 +2435,9 @@ def filter_steps(results: pd.DataFrame, universe_count: int) -> list[dict[str, o
     filters = [
         ("Liquidity",      bool_filter("liquidity_ok")),
         ("RS 20D > 0",     bool_filter("rs_positive", results["rs_spy_20d"] > 0)),
-        ("Close > MA50",   bool_filter("above_ma50")),
-        ("MA50 Rising",    bool_filter("ma50_rising")),
+        ("Close > MA60",   bool_filter("above_ma60")),
+        ("MA60 Rising",    bool_filter("ma60_rising")),
+        ("Trend Struct",   bool_filter("ma_aligned") | bool_filter("golden_cross_recent")),
         ("Not Overheated", bool_filter("not_overheated")),
     ]
     previous = len(results)
@@ -2430,7 +2493,11 @@ def response_from_results(
         "ticker", "name", "sector", "grade", "score",
         "market_cap",
         "rs_spy_20d", "rs_spy_50d", "rs_sector_20d",
-        "close_to_50d_high", "volume_ratio", "volume_trend", "close_position",
+        "close_to_50d_high",
+        "ma_aligned", "golden_cross_recent",
+        "vp_signal", "volume_strength",
+        "accumulation_days_10d", "distribution_days_10d",
+        "volume_ratio", "volume_trend", "close_position",
         "rsi_14", "avg_dollar_volume_20d", "return_20d",
         "buy_price", "buy_price_basis",
         "base_stability", "sector_etf_to_52w_high",
@@ -2605,8 +2672,10 @@ def ticker_lookup(symbol: str) -> dict[str, object]:
         "liquidity_ok":        safe_bool("liquidity_ok"),
         "rs_spy_near_high":    safe_bool("rs_spy_near_high"),
         "rs_positive":         safe_bool("rs_positive"),
-        "above_ma50":          safe_bool("above_ma50"),
-        "ma50_rising":         safe_bool("ma50_rising"),
+        "above_ma60":          safe_bool("above_ma60"),
+        "ma60_rising":         safe_bool("ma60_rising"),
+        "ma_aligned":          safe_bool("ma_aligned"),
+        "golden_cross_recent": safe_bool("golden_cross_recent"),
         "near_50d_high":       safe_bool("near_50d_high"),
         "not_overheated":      safe_bool("not_overheated"),
         "passed_hard_filters": safe_bool("passed_hard_filters"),

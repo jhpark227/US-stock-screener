@@ -26,8 +26,10 @@ class ScreenerConfig:
     rs_mid_window: int = 50
     rs_high_window: int = 50
     ma_short: int = 20
-    ma_mid: int = 50
+    ma_mid: int = 60
+    ma_long: int = 120
     ma_slope_lookback: int = 10
+    golden_cross_lookback: int = 5
     volume_window: int = 20
     atr_window: int = 14
     rsi_window: int = 14
@@ -36,12 +38,18 @@ class ScreenerConfig:
     near_50d_high_threshold: float = 0.90
     volume_ratio_min: float = 1.3
     volume_ratio_cap: float = 5.0
+    volume_strength_interest: float = 1.5
+    volume_strength_attention: float = 2.0
+    volume_strength_conviction: float = 5.0
+    accumulation_days_min: int = 3
+    distribution_days_max: int = 1
+    vp_lookback: int = 10
     close_position_min: float = 0.6
     max_close_to_ma20: float = 1.25
     max_return_5d: float = 0.40
     max_return_20d: float = 0.60
     max_daily_return: float = 0.25
-    min_history_days: int = 80
+    min_history_days: int = 130
     download_batch_size: int = 50
     download_workers: int = 5
 
@@ -247,18 +255,18 @@ def safe_latest(series: pd.Series) -> float | bool | pd.Timestamp:
 def calculate_market_state(spy: pd.DataFrame, qqq: pd.DataFrame, config: ScreenerConfig) -> str:
     """
     4단계 시장 환경 분류:
-    - Confirmed Uptrend: SPY+QQQ 모두 MA50 위 + MA50 상승
-    - Uptrend Under Pressure: 한쪽만 MA50 위 또는 MA50 하강
-    - Market in Correction: SPY 또는 QQQ가 MA50 아래
+    - Confirmed Uptrend: SPY+QQQ 모두 MA60 위 + MA60 상승
+    - Uptrend Under Pressure: 한쪽만 MA60 위 또는 MA60 하강
+    - Market in Correction: SPY 또는 QQQ가 MA60 아래
     - Unknown: 데이터 부족
     """
     def _state(frame: pd.DataFrame) -> tuple[bool, bool]:
         close = frame["Close"]
-        ma50 = close.rolling(config.ma_mid).mean()
+        ma_mid = close.rolling(config.ma_mid).mean()
         if len(close.dropna()) < config.ma_mid + config.ma_slope_lookback:
             return False, False
-        above = close.iloc[-1] > ma50.iloc[-1]
-        rising = ma50.iloc[-1] > ma50.shift(config.ma_slope_lookback).iloc[-1]
+        above = close.iloc[-1] > ma_mid.iloc[-1]
+        rising = ma_mid.iloc[-1] > ma_mid.shift(config.ma_slope_lookback).iloc[-1]
         return bool(above), bool(rising)
 
     spy_above, spy_rising = _state(spy)
@@ -317,8 +325,22 @@ def evaluate_stock(
     frame["return_5d"] = close / close.shift(5) - 1
     frame["return_20d"] = close / close.shift(20) - 1
     frame["ma20"] = close.rolling(config.ma_short).mean()
-    frame["ma50"] = close.rolling(config.ma_mid).mean()
-    frame["ma50_rising"] = frame["ma50"] > frame["ma50"].shift(config.ma_slope_lookback)
+    frame["ma60"] = close.rolling(config.ma_mid).mean()
+    frame["ma120"] = close.rolling(config.ma_long).mean()
+    frame["ma60_rising"] = frame["ma60"] > frame["ma60"].shift(config.ma_slope_lookback)
+    frame["ma120_rising"] = frame["ma120"] > frame["ma120"].shift(config.ma_slope_lookback)
+    frame["ma_aligned"] = (
+        (frame["ma20"] > frame["ma60"]) & (frame["ma60"] > frame["ma120"])
+    )
+    # 골든크로스: MA20이 MA60을 상향돌파한 시점 (최근 N일 내, MA60 상승 중일 때만)
+    ma_defined = frame["ma20"].notna() & frame["ma60"].notna()
+    ma20_above_ma60 = (frame["ma20"] > frame["ma60"]) & ma_defined
+    # shift(1)의 NaN은 True로 처리 → 첫 정의된 시점에 ma20>ma60이어도 cross_up=False
+    prev_above = ma20_above_ma60.shift(1)
+    prev_above_fill = prev_above.where(prev_above.notna(), True).astype(bool)
+    cross_up = ma20_above_ma60 & ~prev_above_fill
+    cross_recent = cross_up.rolling(config.golden_cross_lookback, min_periods=1).max().fillna(0).astype(bool)
+    frame["golden_cross_recent"] = cross_recent & frame["ma60_rising"].fillna(False)
     frame["high_50d"] = close.rolling(config.rs_high_window).max()
     frame["close_to_50d_high"] = close / frame["high_50d"]
     frame["avg_volume_20d"] = volume.rolling(config.volume_window).mean()
@@ -332,6 +354,34 @@ def evaluate_stock(
     frame["atr_14"] = calculate_atr(frame, config.atr_window)
     frame["atr_ratio"] = frame["atr_14"] / close
     frame["rsi_14"] = calculate_rsi(close, config.rsi_window)
+
+    # 가격-거래량 4분면 일별 신호 + 강도 등급
+    price_up = frame["daily_return"] > 0
+    volume_up = volume > frame["avg_volume_20d"]
+    frame["vp_signal"] = np.select(
+        [
+            price_up & volume_up,
+            price_up & ~volume_up,
+            ~price_up & volume_up,
+        ],
+        ["accumulation", "weak_rally", "distribution"],
+        default="dry_up",
+    )
+    accumulation_flag = (frame["vp_signal"] == "accumulation").astype(int)
+    distribution_flag = (frame["vp_signal"] == "distribution").astype(int)
+    frame["accumulation_days_10d"] = accumulation_flag.rolling(config.vp_lookback).sum()
+    frame["distribution_days_10d"] = distribution_flag.rolling(config.vp_lookback).sum()
+
+    vr = frame["volume_ratio"]
+    frame["volume_strength"] = np.select(
+        [
+            vr >= config.volume_strength_conviction,
+            vr >= config.volume_strength_attention,
+            vr >= config.volume_strength_interest,
+        ],
+        ["conviction", "attention", "interest"],
+        default="normal",
+    )
 
     rs_spy = calculate_rs_features(close, spy["Close"], "rs_spy", config)
     rs_qqq = calculate_rs_features(close, qqq["Close"], "rs_qqq", config)
@@ -356,7 +406,7 @@ def evaluate_stock(
     vol_base = returns.rolling(40).std().shift(10)
     feature_frame["base_stability"] = (vol_base / vol_recent.replace(0, np.nan)).clip(upper=3.0) / 3.0
 
-    latest = feature_frame.dropna(subset=["Close", "ma50", "rs_spy_20d", "rs_spy_50d"]).tail(1)
+    latest = feature_frame.dropna(subset=["Close", "ma60", "rs_spy_20d", "rs_spy_50d"]).tail(1)
     if latest.empty:
         return None
 
@@ -365,8 +415,11 @@ def evaluate_stock(
     rs_near_high = bool(row["rs_spy_near_high"])
     rs_positive = row["rs_spy_20d"] > 0
     rs_sector_positive = sector is None or row["rs_sector_20d"] > 0
-    above_ma50 = row["Close"] > row["ma50"]
-    ma50_rising = bool(row["ma50_rising"])
+    above_ma60 = row["Close"] > row["ma60"]
+    ma60_rising = bool(row["ma60_rising"])
+    ma_aligned = bool(row["ma_aligned"]) if not pd.isna(row.get("ma_aligned", np.nan)) else False
+    golden_cross_recent = bool(row["golden_cross_recent"]) if not pd.isna(row.get("golden_cross_recent", np.nan)) else False
+    trend_structure_ok = ma_aligned or (golden_cross_recent and ma60_rising)
     near_50d_high = row["close_to_50d_high"] >= config.near_50d_high_threshold
     not_overheated = (
         row["Close"] <= row["ma20"] * config.max_close_to_ma20
@@ -374,19 +427,21 @@ def evaluate_stock(
         and row["return_20d"] < config.max_return_20d
         and row["daily_return"] < config.max_daily_return
     )
+    accumulation_days = int(row["accumulation_days_10d"]) if not pd.isna(row.get("accumulation_days_10d", np.nan)) else 0
+    distribution_days = int(row["distribution_days_10d"]) if not pd.isna(row.get("distribution_days_10d", np.nan)) else 0
     volume_quality = (
-        row["volume_trend"] >= config.volume_ratio_min
-        and row["close_position"] >= 0.5
+        accumulation_days >= config.accumulation_days_min
+        and distribution_days <= config.distribution_days_max
     )
-    # 하드 필터: "절대 배제" 조건만 포함
-    # - 유동성 미달, 추세 붕괴(MA50 이탈+하강), RS 음수, 과열
-    # rs_near_high / near_50d_high / rs_sector_positive 는 스코어로 반영
+    # 하드 필터: 절대 배제 조건만
+    # - 유동성, RS+, MA60 위/상승, 정배열 또는 최근 골든크로스, 과열 X
     passed = all(
         [
             liquidity_ok,
             rs_positive,
-            above_ma50,
-            ma50_rising,
+            above_ma60,
+            ma60_rising,
+            trend_structure_ok,
             not_overheated,
         ]
     )
@@ -397,15 +452,15 @@ def evaluate_stock(
 
     current_close = float(row["Close"])
     ma20_val = float(row["ma20"]) if not pd.isna(row.get("ma20", np.nan)) else None
-    ma50_val = float(row["ma50"]) if not pd.isna(row.get("ma50", np.nan)) else None
+    ma60_val = float(row["ma60"]) if not pd.isna(row.get("ma60", np.nan)) else None
 
-    # 매수기준가: MA20 위에 있으면 MA20*1.01, 아니면 MA50*1.01
+    # 매수기준가: MA20 위에 있으면 MA20*1.01, 아니면 MA60*1.01
     if ma20_val is not None and current_close > ma20_val:
         buy_price = round(ma20_val * 1.01, 2)
         buy_price_basis = "MA20"
-    elif ma50_val is not None:
-        buy_price = round(ma50_val * 1.01, 2)
-        buy_price_basis = "MA50"
+    elif ma60_val is not None:
+        buy_price = round(ma60_val * 1.01, 2)
+        buy_price_basis = "MA60"
     else:
         buy_price = None
         buy_price_basis = None
@@ -438,10 +493,18 @@ def evaluate_stock(
         "avg_dollar_volume_20d": row["avg_dollar_volume_20d"],
         "close_position": row["close_position"],
         "ma20": row["ma20"],
-        "ma50": row["ma50"],
+        "ma60": row["ma60"],
+        "ma120": row["ma120"],
         "above_ma20": row["Close"] > row["ma20"],
-        "above_ma50": above_ma50,
-        "ma50_rising": ma50_rising,
+        "above_ma60": above_ma60,
+        "ma60_rising": ma60_rising,
+        "ma120_rising": bool(row["ma120_rising"]) if not pd.isna(row.get("ma120_rising", np.nan)) else False,
+        "ma_aligned": ma_aligned,
+        "golden_cross_recent": golden_cross_recent,
+        "vp_signal": row["vp_signal"],
+        "accumulation_days_10d": accumulation_days,
+        "distribution_days_10d": distribution_days,
+        "volume_strength": row["volume_strength"],
         "atr_ratio": row["atr_ratio"],
         "rsi_14": row["rsi_14"],
         "liquidity_ok": liquidity_ok,
@@ -609,8 +672,12 @@ def main() -> None:
             "rs_spy_50d",
             "rs_sector_20d",
             "close_to_50d_high",
-            "volume_ratio",
-            "close_position",
+            "ma_aligned",
+            "golden_cross_recent",
+            "vp_signal",
+            "volume_strength",
+            "accumulation_days_10d",
+            "distribution_days_10d",
             "rsi_14",
         ]
         print()
