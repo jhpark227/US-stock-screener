@@ -12,6 +12,7 @@ wheels/
 # Local runtime caches and generated screener output
 .cache/
 outputs/
+launchd/*.log
 
 # macOS
 .DS_Store
