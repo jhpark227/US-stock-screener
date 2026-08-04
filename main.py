@@ -592,7 +592,9 @@ def add_scores(results: pd.DataFrame) -> pd.DataFrame:
         return results
 
     # 전체 종목에 스코어 부여 — 하드 필터 통과 여부와 무관하게 순위 파악 가능
-    # v2 (2026-08): 백테스트 IC 근거 재가중 — RS 계열만 유의(t>3.4), 당일 봉/베이스 피처는 예측력 없어 제외
+    # v2 (2026-08): 백테스트 IC 근거 재가중 (outputs/backtest/summary_ic.csv)
+    # RS 계열이 IC 상위지만 t=1.3~1.8로 통상 유의수준 미달 — 부호 일관성(양수 65~70%)에 근거한 채택.
+    # 당일 봉 형태/베이스 안정성/MA 정배열/고점 근접도는 IC가 0 근처 또는 음수여서 제외.
     scored = results.copy()
 
     scored["score"] = (
