@@ -763,6 +763,119 @@ INDEX_HTML = r"""
       line-height: 1.5;
     }
 
+    .wl-sig {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 1px 6px;
+      border-radius: 999px;
+      border: 1px solid;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .wl-sig.sig-both  { color: #fff; background: #0e5b45; border-color: #0e5b45; }
+    .wl-sig.sig-surge { color: #0e5b45; background: #edf6f2; border-color: #b2d5c8; }
+    .wl-sig.sig-acc   { color: #3a4a9f; background: #f4f6fd; border-color: #c5cdf0; }
+
+    .wl-dist {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      font-weight: 600;
+      padding: 1px 5px;
+      border-radius: 4px;
+      background: #f0f0ec;
+      color: var(--muted);
+      flex-shrink: 0;
+    }
+    .wl-dist.ok  { background: #edf6f2; color: #0e5b45; }
+    .wl-dist.far { background: #fef6e8; color: var(--warn); }
+
+    .cluster-cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .cluster-card {
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      padding: 10px 12px;
+      background: #fbfbfa;
+    }
+
+    .cc-title {
+      font-size: 12px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .cc-count {
+      font-family: 'DM Mono', monospace;
+      font-size: 11px;
+      font-weight: 600;
+      background: var(--accent-soft);
+      color: #0e5b45;
+      border-radius: 999px;
+      padding: 0 7px;
+    }
+
+    .cc-meta {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+
+    .cc-note {
+      font-size: 11px;
+      color: #4a5248;
+      line-height: 1.45;
+      margin-top: 5px;
+    }
+
+    .cc-tickers {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin-top: 7px;
+    }
+
+    .cc-ticker {
+      font-family: 'DM Mono', monospace;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--accent);
+      border: 1px solid #c8e8dc;
+      border-radius: 4px;
+      padding: 1px 6px;
+      cursor: pointer;
+      background: #fff;
+    }
+
+    /* 신호 종류별 색: 서지 = 초록(즉시성), 매집 = 남색(지속성), 동시 = 초록 채움(최우선) */
+    .cc-ticker.t-acc  { color: #3a4a9f; border-color: #c5cdf0; background: #f4f6fd; }
+    .cc-ticker.t-both { color: #fff; border-color: #0e5b45; background: #0e5b45; }
+
+    .wl-legend {
+      display: inline-flex;
+      gap: 6px;
+      margin-left: auto;
+      align-items: center;
+    }
+
+    .wl-legend .lg {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 1px 7px;
+      border-radius: 999px;
+      border: 1px solid;
+    }
+
+    .wl-legend .lg.surge { color: #0e5b45; background: #edf6f2; border-color: #b2d5c8; }
+    .wl-legend .lg.acc   { color: #3a4a9f; background: #f4f6fd; border-color: #c5cdf0; }
+    .wl-legend .lg.both  { color: #fff; background: #0e5b45; border-color: #0e5b45; }
+
     .wl-empty {
       padding: 10px 12px;
       font-size: 12px;
@@ -1190,8 +1303,14 @@ INDEX_HTML = r"""
     <div class="watchlist-panel" id="watchlistPanel">
       <div class="watchlist-header">
         <h3>오늘의 종목 해석</h3>
+        <span class="wl-legend">
+          <span class="lg surge">서지</span>
+          <span class="lg acc">매집</span>
+          <span class="lg both">서지+매집</span>
+        </span>
         <span class="wl-date" id="watchlistDate"></span>
       </div>
+      <div class="cluster-cards" id="clusterCards" style="display:none"></div>
       <div class="watchlist-groups" id="watchlistGroups"></div>
     </div>
 
@@ -1200,8 +1319,8 @@ INDEX_HTML = r"""
         <h2>Candidates</h2>
         <div class="grade-group">
           <button class="grade-btn active" data-grade="all">전체</button>
-          <button class="grade-btn" data-grade="A">A등급</button>
-          <button class="grade-btn" data-grade="B">B등급</button>
+          <button class="grade-btn" data-grade="A">A (MA강세)</button>
+          <button class="grade-btn" data-grade="B">B (MA약세)</button>
         </div>
         <select class="sector-select" id="sectorFilter">
           <option value="">전체 섹터</option>
@@ -1212,8 +1331,8 @@ INDEX_HTML = r"""
             <button class="mcap-btn active" data-mcap="all">All<span class="mcap-tooltip">전체</span></button>
             <button class="mcap-btn" data-mcap="small">Small<span class="mcap-tooltip">< $2B</span></button>
             <button class="mcap-btn" data-mcap="mid">Mid<span class="mcap-tooltip">$2B – $10B</span></button>
-            <button class="mcap-btn" data-mcap="large">Large<span class="mcap-tooltip">$10B – $200B</span></button>
-            <button class="mcap-btn" data-mcap="mega">Mega<span class="mcap-tooltip">≥ $200B</span></button>
+            <button class="mcap-btn" data-mcap="large">Large<span class="mcap-tooltip">$10B – $100B</span></button>
+            <button class="mcap-btn" data-mcap="mega">Mega<span class="mcap-tooltip">≥ $100B</span></button>
           </div>
         </div>
         <span class="candidate-count" id="candidateCount"></span>
@@ -1285,31 +1404,27 @@ INDEX_HTML = r"""
     const candidateCount = document.getElementById("candidateCount");
     const sectorFilter = document.getElementById("sectorFilter");
 
+    // 결정용 핵심 컬럼만 표시 — 상세 지표는 CSV·티커 조회에서 확인
     const columns = [
       ["_diff",                  "",             "diff"],
       ["_rank",                  "#",            "rank"],
       ["ticker",                 "Ticker",       "text"],
       ["name",                   "Name",         "text"],
       ["sector",                 "Sector",       "text"],
+      ["signal_type",            "Signal",       "signal"],
       ["grade",                  "Grade",        "grade"],
       ["score",                  "Score",        "decimal"],
+      ["close",                  "Price",        "price"],
       ["market_cap",             "Mkt Cap",      "marketcap"],
       ["rs_spy_20d",             "RS 20D",       "pct"],
       ["rs_spy_50d",             "RS 50D",       "pct"],
       ["rs_sector_20d",          "Sector RS",    "pct"],
+      ["volume_ratio",           "Vol ×",        "decimal"],
+      ["accumulation_days_10d",  "매집 10d",     "number"],
       ["close_to_50d_high",      "50D High",     "ratio"],
-      ["ma_aligned",             "정배열",       "flag"],
-      ["golden_cross_recent",    "GC",           "flag"],
-      ["vp_signal",              "P/V",          "vp"],
-      ["volume_strength",        "Vol Str",      "vstr"],
-      ["accumulation_days_10d",  "Acc 10d",      "number"],
-      ["distribution_days_10d",  "Dist 10d",     "number"],
-      ["close_position",         "Close Pos",    "ratio"],
-      ["rsi_14",                 "RSI",          "number"],
       ["buy_price",              "Buy Price",    "money"],
       ["buy_price_basis",        "Basis",        "text"],
-      ["base_stability",         "Base",         "ratio"],
-      ["sector_etf_to_52w_high", "Sector 52W",   "ratio"],
+      ["warnings",               "주의",         "warntext"],
     ];
 
     // --- State ---
@@ -1323,8 +1438,8 @@ INDEX_HTML = r"""
       all:   [0,        Infinity],
       small: [0,        2e9],
       mid:   [2e9,      10e9],
-      large: [10e9,     200e9],
-      mega:  [200e9,    Infinity],
+      large: [10e9,     100e9],
+      mega:  [100e9,    Infinity],
     };
     let activeMcap = "all";
 
@@ -1360,6 +1475,7 @@ INDEX_HTML = r"""
       if (type === "decimal")   return Number(value).toFixed(3);
       if (type === "number")    return Number.isInteger(Number(value)) ? String(Number(value)) : Number(value).toFixed(1);
       if (type === "money")     return `$${Number(value).toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 2 })}`;
+      if (type === "price")     { const v = Number(value); return v < 1 ? `$${v.toFixed(3)}` : v < 10 ? `$${v.toFixed(2)}` : `$${Math.round(v).toLocaleString()}`; }
       if (type === "rank")      return value;
       if (type === "stage")     return value || "";
       if (type === "flag")      return value ? "✓" : "";
@@ -1438,15 +1554,27 @@ INDEX_HTML = r"""
         }
       }
 
-      // 3. 거래량 확인 (A등급 비율)
+      // 3. 신호 구성 (서지 / 지속 매집 / 동시)
       if (candidates > 0) {
-        const aPct = gradeA / candidates * 100;
-        if (aPct < 15) {
-          items.push(`<span class="tag warn">거래량 미확인</span>최종 후보 중 A등급(거래량 확인) ${gradeA}개(${aPct.toFixed(0)}%) — 추세는 있으나 강한 매수세가 실린 종목은 소수. B등급 진입 시 거래량 재확인 권장.`);
-        } else if (aPct >= 35) {
-          items.push(`<span class="tag">거래량 확인</span>A등급 ${gradeA}개(${aPct.toFixed(0)}%) — 거래량까지 뒷받침된 종목 비율이 높아 매수 환경 우호적.`);
-        } else {
-          items.push(`<span class="tag neutral">거래량 보통</span>A등급 ${gradeA}개(${aPct.toFixed(0)}%) — 거래량 확인 종목과 미확인 종목이 혼재. A등급 우선 검토 권장.`);
+        const cands  = data.candidates || [];
+        const both   = cands.filter(r => r.signal_type === "surge+acc").length;
+        const surgeN = cands.filter(r => r.signal_type === "surge").length;
+        const accN   = cands.filter(r => r.signal_type === "acc").length;
+        if (both > 0) {
+          items.push(`<span class="tag">최우선 신호</span>서지+매집 동시 신호 ${both}개 — 백테스트상 가장 강한 조합. 최우선 검토 대상.`);
+        }
+        items.push(`<span class="tag neutral">신호 구성</span>당일 서지 ${surgeN}개 · 지속 매집 ${accN}개 · 동시 ${both}개 — 서지는 즉시성, 매집은 지속성 신호. ⚠ 라벨 종목은 고수익·고위험 구간이니 포지션 크기로 관리.`);
+
+        // 4. 신고가 리더 (조정장에서는 역행 리더로 강조)
+        const newHighs = cands.filter(r => (r.close_to_50d_high ?? 0) >= 0.99);
+        if (newHighs.length > 0) {
+          const names = newHighs.slice(0, 8).map(r => r.ticker).join(", ");
+          const suffix = newHighs.length > 8 ? " 외" : "";
+          if ((data.market_state || "") === "Market in Correction") {
+            items.push(`<span class="tag">역행 리더</span>조정장 속 50일 신고가 ${newHighs.length}개 (${names}${suffix}) — 시장과 역행하는 상대강도 리더. 조정 종료 시 주도주가 될 확률이 높은 그룹.`);
+          } else {
+            items.push(`<span class="tag">신고가</span>50일 신고가 돌파/근접 ${newHighs.length}개 (${names}${suffix}).`);
+          }
         }
       }
 
@@ -1460,96 +1588,66 @@ INDEX_HTML = r"""
       insightBar.style.display = "block";
     }
 
-    // --- Watchlist ---
+    // --- Watchlist (실행 관점 그룹핑) ---
+    function buyDistance(r) {
+      if (!r.buy_price || !r.close) return null;
+      return r.close / r.buy_price - 1;
+    }
+
     function buildComment(r, group) {
       const rs20  = r.rs_spy_20d ?? 0;
       const secRS = r.rs_sector_20d ?? 0;
-      const high  = r.close_to_50d_high ?? 0;
       const vol   = r.volume_ratio ?? 0;
-      const cp    = r.close_position ?? 0;
+      const acc   = r.accumulation_days_10d ?? 0;
       const ret20 = r.return_20d ?? 0;
-      const isA   = r.grade === "A";
 
       const parts = [];
 
-      // 워치리스트 A등급: 왜 진입 검토가 아닌지 먼저 명시
-      if (group === "list" && isA) {
-        if (ret20 >= 0.40) {
-          parts.push(`A등급이지만 20일 수익률 ${(ret20*100).toFixed(0)}%로 단기 급등 피로 구간 — 눌림 확인 후 재진입 검토`);
-        } else if (high < 0.97) {
-          parts.push(`A등급이지만 50일 고점의 ${(high*100).toFixed(0)}%로 아직 고점에서 멀어진 상태 — 고점 재접근 시 재분류 예정`);
-        }
+      // 신호 설명
+      if (r.signal_type === "surge+acc") parts.push(`당일 거래량 ${vol.toFixed(1)}배 서지 + 10일 중 매집 ${acc}일 동시 신호`);
+      else if (r.signal_type === "surge") parts.push(`당일 거래량 ${vol.toFixed(1)}배 서지`);
+      else if (r.signal_type === "acc") parts.push(`10일 중 매집 ${acc}일 — 조용한 지속 매집`);
+
+      // 이벤트성 거래량 주의
+      if (r.signal_type !== "acc" && vol >= 2.5) parts.push("2.5배+ 이벤트성 거래량 — 실적/뉴스 반응일 수 있어 1~2일 소화 확인 권장");
+
+      // 매수기준가 대비 위치 (실행 판단)
+      const d = buyDistance(r);
+      if (d !== null) {
+        if (d <= 0.03) parts.push(`매수기준가 $${r.buy_price.toFixed(2)}(${r.buy_price_basis || "MA"}) 대비 ${d >= 0 ? "+" : ""}${(d*100).toFixed(1)}% — 진입 검토 구간`);
+        else if (d > 0.07) parts.push(`매수기준가 대비 +${(d*100).toFixed(1)}% 확장 — ${r.buy_price_basis || "MA"} 눌림 대기`);
+        else parts.push(`매수기준가 대비 +${(d*100).toFixed(1)}%`);
       }
 
-      // RS 강도
+      // RS 강도 (우선순위 근거)
       if (rs20 >= 0.30) parts.push(`RS 20D ${(rs20*100).toFixed(0)}%로 강한 모멘텀`);
       else parts.push(`RS 20D ${(rs20*100).toFixed(0)}%`);
+      if (secRS >= 0.15) parts.push(`섹터 RS ${(secRS*100).toFixed(0)}%`);
 
-      // 섹터 내 위치
-      if (secRS >= 0.30) parts.push(`섹터 내 최상위 RS(${(secRS*100).toFixed(0)}%)`);
-      else if (secRS >= 0.15) parts.push(`섹터 RS ${(secRS*100).toFixed(0)}%로 양호`);
+      // MA 컨텍스트 (등급 근거)
+      if (r.grade === "A") parts.push("MA60 위+상승 (추세 컨텍스트 확보)");
+      else parts.push("MA 컨텍스트 약함 — 반등 성격, 리스크 관리 필수");
 
-      // 고점 근접 (워치리스트 A등급 첫 줄에서 이미 언급했으면 생략)
-      if (!(group === "list" && isA)) {
-        if (high >= 0.99) parts.push("50일 고점 돌파 중");
-        else if (high >= 0.97) parts.push(`50일 고점의 ${(high*100).toFixed(0)}%로 신고점 직전`);
-        else parts.push(`50일 고점의 ${(high*100).toFixed(0)}%`);
-      }
-
-      // 등급 판단 근거
-      if (isA) {
-        parts.push(`거래량 ${vol.toFixed(2)}배, 종가위치 ${(cp*100).toFixed(0)}%로 당일 매수세 확인`);
-      } else {
-        if (vol < 1.3 && cp < 0.6) {
-          parts.push(`거래량 ${vol.toFixed(2)}배·종가위치 ${(cp*100).toFixed(0)}% 모두 미흡 — 추세만 확인된 상태`);
-        } else if (vol < 1.3) {
-          parts.push(`거래량 ${vol.toFixed(2)}배로 평소 수준 — 거래량 확인 후 진입 검토`);
-        } else {
-          parts.push(`종가위치 ${(cp*100).toFixed(0)}%로 장중 밀림 — 내일 종가 위치 재확인 필요`);
-        }
-      }
-
-      // 과열 경고 (워치리스트 A등급 첫 줄에서 이미 언급했으면 생략)
-      if (!(group === "list" && isA && ret20 >= 0.40)) {
-        if (ret20 >= 0.50) parts.push(`20일 수익률 ${(ret20*100).toFixed(0)}%로 단기 급등 구간, 눌림 주의`);
-        else if (ret20 >= 0.35) parts.push(`20일 수익률 ${(ret20*100).toFixed(0)}%로 다소 과열`);
-      }
+      // 경고 라벨
+      if (r.warnings) parts.push(`⚠ ${r.warnings}`);
+      else if (ret20 >= 0.35) parts.push(`20일 수익률 ${(ret20*100).toFixed(0)}%로 다소 과열`);
 
       return parts.join(". ") + ".";
     }
 
     function buildWatchlist(candidates) {
-      function priorityScore(r) {
-        let s = 0;
-        if (r.grade === "A") s += 40;
-        if ((r.close_to_50d_high ?? 0) >= 0.97) s += 25;
-        s += Math.min((r.rs_sector_20d ?? 0) * 100, 20);
-        const ret20 = r.return_20d ?? 0;
-        if (ret20 < 0.20) s += 15;
-        else if (ret20 < 0.40) s += 8;
-        return s;
+      // 그룹은 실행 관점: 매수가 근처(≤+3%) / 확장(눌림 대기) / 후순위(저점수·분산 다수)
+      // 그룹 내 정렬은 스코어(RS 중심). 신호 종류는 각 행의 배지로 표시.
+      const sorted = [...candidates].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+      const near = [], extended = [], low = [];
+      for (const r of sorted) {
+        const lowPriority = (r.score ?? 0) < 0.5 || (r.distribution_days_10d ?? 0) >= 5;
+        const d = buyDistance(r);
+        if (lowPriority)                 low.push(r);
+        else if (d !== null && d <= 0.03) near.push(r);
+        else                             extended.push(r);
       }
-
-      const scored = candidates.map(r => ({ ...r, _ps: priorityScore(r) }))
-        .sort((a, b) => b._ps - a._ps);
-
-      const entry = [], watch = [], list = [];
-
-      for (const r of scored) {
-        const isA      = r.grade === "A";
-        const nearHigh = (r.close_to_50d_high ?? 0) >= 0.97;
-        const ret20ok  = (r.return_20d ?? 0) < 0.40;
-
-        if (isA && nearHigh && ret20ok) {
-          entry.push(r);
-        } else if (!isA && nearHigh && ret20ok) {
-          watch.push(r);
-        } else {
-          list.push(r);
-        }
-      }
-
-      return { entry, watch, list };
+      return { near, extended, low };
     }
 
     function renderWatchlistGroup(title, cls, group, rows) {
@@ -1557,18 +1655,69 @@ INDEX_HTML = r"""
       if (!rows.length) {
         return `<div class="wl-group">${titleHtml}<div class="wl-empty">해당 종목 없음</div></div>`;
       }
+      const sigMap = {
+        "surge+acc": ["서지+매집", "sig-both"],
+        "surge":     ["서지",      "sig-surge"],
+        "acc":       ["매집",      "sig-acc"],
+      };
       const rowsHtml = rows.map(r => {
         const gradeCls = r.grade === "B" ? " b" : "";
+        const sig = sigMap[r.signal_type];
+        const sigHtml = sig ? `<span class="wl-sig ${sig[1]}">${sig[0]}</span>` : "";
+        const d = buyDistance(r);
+        const distCls = d === null ? "" : d <= 0.03 ? " ok" : d > 0.07 ? " far" : "";
+        const distHtml = d === null ? "" : `<span class="wl-dist${distCls}" title="매수기준가 대비 현재가 위치">${d >= 0 ? "+" : ""}${(d*100).toFixed(1)}%</span>`;
         return `<div class="wl-row">
           <div class="wl-row-top">
             <span class="wl-grade${gradeCls}">${escapeHtml(r.grade)}</span>
             <span class="wl-ticker ticker-link" data-ticker="${escapeHtml(r.ticker)}" data-name="${escapeHtml(r.name||"")}">${escapeHtml(r.ticker)}</span>
+            ${sigHtml}
+            ${distHtml}
             <span class="wl-name">${escapeHtml(r.name || "")}</span>
           </div>
           <div class="wl-comment">${escapeHtml(buildComment(r, group))}</div>
         </div>`;
       }).join("");
       return `<div class="wl-group">${titleHtml}<div class="wl-rows">${rowsHtml}</div></div>`;
+    }
+
+    function renderClusterCards(candidates) {
+      const el = document.getElementById("clusterCards");
+      const bySector = {};
+      candidates.forEach(r => { (bySector[r.sector] = bySector[r.sector] || []).push(r); });
+      const clusters = Object.entries(bySector)
+        .filter(([, rows]) => rows.length >= 3)
+        .sort((a, b) => b[1].length - a[1].length);
+      if (!clusters.length) { el.style.display = "none"; el.innerHTML = ""; return; }
+
+      el.innerHTML = clusters.map(([sector, rows]) => {
+        const nBoth  = rows.filter(r => r.signal_type === "surge+acc").length;
+        const nSurge = rows.filter(r => r.signal_type === "surge").length + nBoth;
+        const nAcc   = rows.filter(r => r.signal_type === "acc").length + nBoth;
+        const nHigh  = rows.filter(r => (r.close_to_50d_high ?? 0) >= 0.99).length;
+        let note;
+        if (nAcc > 0 && nSurge > 0) note = "서지·매집 신호가 같은 업종에서 동시 발생 — 업종 단위 자금 유입 가능성";
+        else if (nAcc >= 3)         note = "조용한 매집 다수 — 기관성 수집이 진행 중일 가능성";
+        else                        note = "당일 서지 위주 — 이벤트성인지 지속성인지 확인 필요";
+        if (nHigh >= 2) note += ` · 50일 신고가 ${nHigh}개`;
+        const chips = [...rows].sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+          .map(r => {
+            const sigCls = r.signal_type === "surge+acc" ? " t-both" : r.signal_type === "acc" ? " t-acc" : "";
+            const sigTitle = r.signal_type === "surge+acc" ? "서지+매집 동시" : r.signal_type === "acc" ? "지속 매집" : "당일 서지";
+            return `<span class="cc-ticker${sigCls} ticker-link" title="${sigTitle}" data-ticker="${escapeHtml(r.ticker)}" data-name="${escapeHtml(r.name||"")}">${escapeHtml(r.ticker)}</span>`;
+          })
+          .join("");
+        return `<div class="cluster-card">
+          <div class="cc-title">${escapeHtml(sector)} <span class="cc-count">${rows.length}</span></div>
+          <div class="cc-meta"><span style="color:#0e5b45;font-weight:600">서지 ${nSurge}</span> · <span style="color:#3a4a9f;font-weight:600">매집 ${nAcc}</span>${nBoth ? ` · <span style="color:#fff;background:#0e5b45;border-radius:4px;padding:0 5px;font-weight:600">동시 ${nBoth}</span>` : ""}</div>
+          <div class="cc-note">${escapeHtml(note)}</div>
+          <div class="cc-tickers">${chips}</div>
+        </div>`;
+      }).join("");
+      el.style.display = "grid";
+      el.querySelectorAll(".ticker-link").forEach(link => {
+        link.addEventListener("click", () => openChartModal(link.dataset.ticker, link.dataset.name));
+      });
     }
 
     function renderWatchlist(data) {
@@ -1578,12 +1727,13 @@ INDEX_HTML = r"""
       const candidates = data.candidates || [];
       if (!candidates.length) { panel.style.display = "none"; return; }
 
-      const { entry, watch, list } = buildWatchlist(candidates);
+      const { near, extended, low } = buildWatchlist(candidates);
       dateEl.textContent = data.date || "";
+      renderClusterCards(candidates);
       groups.innerHTML = [
-        renderWatchlistGroup("오늘 진입 검토",   "g-entry", "entry", entry),
-        renderWatchlistGroup("거래량 확인 대기", "g-watch", "watch", watch),
-        renderWatchlistGroup("워치리스트",       "g-list",  "list",  list),
+        renderWatchlistGroup("매수가 근처 — 진입 검토",    "g-entry", "near",     near),
+        renderWatchlistGroup("확장 상태 — 눌림 대기",      "g-watch", "extended", extended),
+        renderWatchlistGroup("후순위 — 저점수·분산 다수",  "g-list",  "low",      low),
       ].join("");
 
       groups.querySelectorAll(".ticker-link").forEach(el => {
@@ -1752,9 +1902,9 @@ INDEX_HTML = r"""
 
       const cfg = data.config || {};
       const params = [
-        `A등급: 누적일 ≥ 3 · 분산일 ≤ 1 (최근 10일)`,
-        `추세: MA20>MA60>MA120 정배열 OR 최근 5일 골든크로스`,
-        `스코어: RS50D 25% · RS20D 20% · RS가속 15% · 섹터RS 15% · 50D고점 15% · 거래량 10%`,
+        `트리거: 당일 서지(거래량 ${cfg.surge_ratio_min ?? 1.5}~${cfg.surge_ratio_max ?? 5}배+양봉) OR 매집 ${cfg.accumulation_trigger_days ?? 6}일+/10일`,
+        `필수: RS 20D > 0 · 유동성 통과 / 등급: A=MA60 위+상승, B=MA 약세`,
+        `스코어: RS20D 30% · RS50D 25% · 섹터RS 25% · 매집일 10% · 거래량추세 10%`,
       ].map(t => `<span class="chip">${escapeHtml(t)}</span>`).join("");
 
       filterFunnel.innerHTML = stepsHtml +
@@ -1767,8 +1917,11 @@ INDEX_HTML = r"""
       "ticker":                 "종목 티커. 클릭하면 차트 팝업",
       "name":                   "종목명",
       "sector":                 "GICS 섹터",
-      "grade":                  "A: 추세 + 거래량 모두 확인\nB: 추세만 확인, 거래량 미충족",
-      "score":                  "RS·거래량·고점 근접도 등을 percentile 가중합한 0~1 점수\n높을수록 현재 장에서 상대적으로 강한 종목",
+      "grade":                  "MA 컨텍스트 등급\nA: MA60 위 + MA60 상승 (추세 속 신호)\nB: MA 약세 (반등 성격 — 리스크 관리 필수)",
+      "signal_type":            "주목 트리거 종류\n서지: 당일 거래량 1.5~5배 + 양봉\n매집: 최근 10일 중 매집일 6일 이상\n서지+매집: 둘 다 충족 — 백테스트상 가장 강한 신호",
+      "warnings":               "경고 라벨 (배제 아님)\n과열: 단기 급등 구간 — 고수익·고위험, 포지션 크기로 관리\n거래량5x+: 어닝스 갭 의심 — 추격 주의\n분산N일: 최근 10일 내 분산일 다수 — 매도 압력",
+      "score":                  "RS 중심 percentile 가중합 (0~1)\nRS20D 30% + RS50D 25% + 섹터RS 25% + 매집일 10% + 거래량추세 10%\n백테스트 IC 검증 완료 — 높을수록 20일 초과수익 기대값 상승",
+      "volume_ratio":           "당일 거래량 ÷ 20일 평균 거래량\n1.5~5배 + 양봉이면 서지 트리거 충족",
       "market_cap":             "시가총액",
       "rs_spy_20d":             "최근 20일간 SPY 대비 상대강도 변화율\n양수 = 시장보다 더 많이 오름",
       "rs_spy_50d":             "최근 50일간 SPY 대비 상대강도 변화율\n단기(20D)와 함께 보면 모멘텀 지속성 확인 가능",
@@ -1795,7 +1948,7 @@ INDEX_HTML = r"""
       }
       const head = columns.map(([key, label, type]) => {
         if (type === "diff") return `<th class="diff-badge-cell"></th>`;
-        const isNum = ["pct", "ratio", "decimal", "number", "marketcap"].includes(type);
+        const isNum = ["pct", "ratio", "decimal", "number", "marketcap", "price"].includes(type);
         const isCenter = ["flag", "vp", "vstr"].includes(type);
         let cls = isNum ? "num" : isCenter ? "center" : type === "rank" ? "rank" : "";
         let sortCls = key === sortKey ? (sortAsc ? " sort-asc" : " sort-desc") : "";
@@ -1841,11 +1994,27 @@ INDEX_HTML = r"""
             const warn = isChasing ? " ⚠" : "";
             return `<td class="num" style="${color}" title="${isChasing ? "피벗 대비 5% 초과 — 추격 위험" : ""}">${prefix}${pct}%${warn}</td>`;
           }
-          const isNum = ["pct", "ratio", "decimal", "number", "marketcap", "money"].includes(type);
+          const isNum = ["pct", "ratio", "decimal", "number", "marketcap", "money", "price"].includes(type);
           const isCenter = ["flag", "vp", "vstr"].includes(type);
           const cls = isNum ? "num" : isCenter ? "center" : key === "ticker" ? "ticker" : "";
           if (key === "ticker" && row[key]) {
             return `<td class="${cls}"><span class="ticker-link" data-ticker="${escapeHtml(row[key])}" data-name="${escapeHtml(row.name || "")}" style="cursor:pointer;border-bottom:1px dotted var(--accent)">${escapeHtml(row[key])}</span></td>`;
+          }
+          if (type === "signal") {
+            const v = row[key] || "";
+            const sigMap = {
+              "surge+acc": ["서지+매집", "color:#fff;background:#0e5b45;border-color:#0e5b45;font-weight:700"],
+              "surge":     ["서지",      "color:#0e5b45;background:#edf6f2;border-color:#b2d5c8"],
+              "acc":       ["매집",      "color:#3a4a9f;background:#f4f6fd;border-color:#c5cdf0"],
+            };
+            const entry = sigMap[v];
+            if (!entry) return `<td></td>`;
+            return `<td><span style="font-size:11px;padding:2px 7px;border-radius:999px;border:1px solid;white-space:nowrap;${entry[1]}">${entry[0]}</span></td>`;
+          }
+          if (type === "warntext") {
+            const v = row[key] || "";
+            if (!v) return `<td></td>`;
+            return `<td style="color:var(--warn);font-size:11px;white-space:nowrap">⚠ ${escapeHtml(v)}</td>`;
           }
           if (type === "vp") {
             const v = row[key];
@@ -1902,15 +2071,15 @@ INDEX_HTML = r"""
       const configs = {
         "Confirmed Uptrend": {
           cls: "uptrend", icon: "●",
-          desc: "SPY·QQQ 모두 MA60 위 + 상승 중 — 매수 환경 우호적. 후보 종목 정상 출력.",
+          desc: "SPY·QQQ 모두 MA60 위 + 상승 중 — 신호 신뢰도가 가장 높은 구간 (백테스트: 후보 20일 초과수익 +1.7%, 승률 52%). 정상 매수 환경.",
         },
         "Uptrend Under Pressure": {
           cls: "pressure", icon: "◐",
-          desc: "지수 일부 약화 중 — 추세 훼손 초기. A등급 위주로 검토하고 포지션 크기 축소 권장.",
+          desc: "지수 일부 약화 중 — 추세 훼손 초기. 신호 신뢰도 중간, 포지션 크기 축소 권장.",
         },
         "Market in Correction": {
           cls: "correction", icon: "○",
-          desc: "SPY 또는 QQQ가 MA60 아래 — 하락장. 후보 종목은 참고용으로만 활용, 신규 매수 자제.",
+          desc: "SPY 또는 QQQ가 MA60 아래 — 조정장으로 기대 엣지가 얇은 구간. 포지션은 평소보다 작게. 단, 이 장에서 신고가를 만드는 종목은 조정 종료 후 주도주가 될 확률이 높은 리더 후보.",
         },
       };
       const cfg = configs[state] || { cls: "", icon: "?", desc: state };
@@ -1944,27 +2113,25 @@ INDEX_HTML = r"""
 
     // --- Ticker search ---
     const filterLabels = {
-      "liquidity_ok":        "유동성",
-      "rs_positive":         "RS 20D > 0",
-      "above_ma60":          "MA60 위",
-      "ma60_rising":         "MA60 상승",
-      "ma_aligned":          "정배열 (20>60>120)",
-      "golden_cross_recent": "최근 골든크로스",
-      "not_overheated":      "과열 없음",
-      "passed_hard_filters": "하드 필터 통과",
-      "volume_quality":      "거래량 품질 (A등급)",
+      "liquidity_ok":            "유동성",
+      "rs_positive":             "RS 20D > 0 (필수)",
+      "surge_today":             "당일 서지 (1.5~5배+양봉)",
+      "sustained_accumulation":  "지속 매집 (10일 중 6일+)",
+      "passed_hard_filters":     "최종 후보",
+      "above_ma60":              "MA60 위 [등급]",
+      "ma60_rising":             "MA60 상승 [등급]",
+      "not_overheated":          "과열 없음 [라벨]",
     };
 
     const filterFailReasons = {
-      "liquidity_ok":        (m) => `20일 평균 거래대금이 기준 미달 — 유동성이 낮아 제외됩니다.`,
-      "rs_positive":         (m) => `최근 20일간 SPY 대비 상대강도(RS)가 마이너스 — 시장 전체보다 더 많이 하락했습니다.`,
-      "above_ma60":          (m) => `현재 주가가 60일 이동평균선 아래 — 중기 추세가 하락 방향입니다.`,
-      "ma60_rising":         (m) => `60일 이동평균선이 10일 전보다 낮아짐 — 평균선 자체가 하향 중이어서 추세 약화 신호입니다.`,
-      "ma_aligned":          (m) => `MA20 > MA60 > MA120 정배열이 아니고, 최근 5일 내 골든크로스도 없습니다 — 추세 구조가 아직 형성되지 않았습니다.`,
-      "golden_cross_recent": (m) => `최근 5일 내 MA20이 MA60을 상향돌파한 골든크로스가 없습니다 (정배열 종목은 통과).`,
-      "not_overheated":      (m) => `단기 급등 감지 — MA20 대비 125% 초과이거나, 5일 수익률 40% 이상이거나, 당일 수익률 25% 이상입니다. 추격 매수 위험이 높은 구간입니다.`,
-      "passed_hard_filters": (m) => `위 필터 중 하나 이상 탈락 — 최종 후보군에 포함되지 않았습니다.`,
-      "volume_quality":      (m) => `거래량 품질 미충족 — 최근 10일 중 누적일(가격↑+거래량↑)이 3일 미만이거나, 분산일(가격↓+거래량↑)이 2일 이상입니다. B등급으로 분류됩니다.`,
+      "liquidity_ok":            (m) => `20일 평균 거래대금이 기준 미달 — 유동성이 낮아 제외됩니다.`,
+      "rs_positive":             (m) => `최근 20일간 SPY 대비 상대강도(RS)가 마이너스 — 시장 전체보다 약합니다. RS+는 필수 조건입니다.`,
+      "surge_today":             (m) => `당일 거래량 서지 없음 — 20일 평균 대비 1.5~5배 + 양봉 조건 미충족 (지속 매집 충족 시에는 통과 가능).`,
+      "sustained_accumulation":  (m) => `지속 매집 미충족 — 최근 10일 중 매집일(가격↑+거래량↑)이 6일 미만 (당일 서지 충족 시에는 통과 가능).`,
+      "passed_hard_filters":     (m) => `유동성 · RS+ · 거래량 트리거(당일 서지 OR 지속 매집) 중 하나 이상 미충족 — 후보군에 포함되지 않았습니다.`,
+      "above_ma60":              (m) => `주가가 MA60 아래 — 배제 사유는 아니지만 B등급(MA 약세, 반등 성격)으로 분류됩니다.`,
+      "ma60_rising":             (m) => `MA60이 10일 전보다 낮음 — 배제 사유는 아니지만 B등급(MA 약세)으로 분류됩니다.`,
+      "not_overheated":          (m) => `과열 구간 — MA20 대비 125% 초과, 5일 40%+, 또는 당일 25%+ 급등. 배제하지 않지만 ⚠과열 라벨이 붙습니다 (고수익·고위험 구간, 포지션 크기로 관리).`,
     };
 
     function renderTickerResult(d) {
@@ -1990,7 +2157,7 @@ INDEX_HTML = r"""
       if (!hasResult) {
         body = `<div style="color:var(--muted);font-size:12px;margin-top:6px">스크리너 결과가 없습니다. Run Screener를 먼저 실행해 주세요.</div>`;
       } else {
-        const filterKeys = ["liquidity_ok","rs_positive","above_ma60","ma60_rising","ma_aligned","golden_cross_recent","not_overheated","passed_hard_filters","volume_quality"];
+        const filterKeys = ["liquidity_ok","rs_positive","surge_today","sustained_accumulation","passed_hard_filters","above_ma60","ma60_rising","not_overheated"];
         const chips = filterKeys.map(key => {
           const val = filters[key];
           if (val === null || val === undefined) return "";
@@ -2433,12 +2600,9 @@ def filter_steps(results: pd.DataFrame, universe_count: int) -> list[dict[str, o
     ]
     mask = pd.Series(True, index=results.index)
     filters = [
-        ("Liquidity",      bool_filter("liquidity_ok")),
-        ("RS 20D > 0",     bool_filter("rs_positive", results["rs_spy_20d"] > 0)),
-        ("Close > MA60",   bool_filter("above_ma60")),
-        ("MA60 Rising",    bool_filter("ma60_rising")),
-        ("Trend Struct",   bool_filter("ma_aligned") | bool_filter("golden_cross_recent")),
-        ("Not Overheated", bool_filter("not_overheated")),
+        ("Liquidity",       bool_filter("liquidity_ok")),
+        ("RS 20D > 0",      bool_filter("rs_positive", results["rs_spy_20d"] > 0)),
+        ("Volume Trigger",  bool_filter("surge_today") | bool_filter("sustained_accumulation")),
     ]
     previous = len(results)
     for label, condition in filters:
@@ -2446,9 +2610,10 @@ def filter_steps(results: pd.DataFrame, universe_count: int) -> list[dict[str, o
         count = int(mask.sum())
         steps.append({"label": label, "count": count, "removed": max(previous - count, 0)})
         previous = count
+    grade_series = results["grade"] if "grade" in results.columns else pd.Series("", index=results.index)
     steps.append({
-        "label": "A Grade",
-        "count": int((bool_filter("passed_hard_filters") & bool_filter("volume_quality")).sum()),
+        "label": "A Grade (MA강세)",
+        "count": int((bool_filter("passed_hard_filters") & (grade_series == "A")).sum()),
         "removed": 0,
     })
     return steps
@@ -2468,10 +2633,10 @@ def config_payload(config: ScreenerConfig) -> dict[str, object]:
     return {
         "period": config.period,
         "min_dollar_volume": config.min_dollar_volume,
-        "rs_near_high_threshold": config.rs_near_high_threshold,
-        "near_50d_high_threshold": config.near_50d_high_threshold,
-        "volume_ratio_min": config.volume_ratio_min,
-        "close_position_min": config.close_position_min,
+        "surge_ratio_min": config.surge_ratio_min,
+        "surge_ratio_max": config.surge_ratio_max,
+        "accumulation_trigger_days": config.accumulation_trigger_days,
+        "vp_lookback": config.vp_lookback,
     }
 
 
@@ -2491,7 +2656,8 @@ def response_from_results(
     candidates = results.loc[results["passed_hard_filters"].fillna(False)].copy()
     candidate_columns = [
         "ticker", "name", "sector", "grade", "score",
-        "market_cap",
+        "signal_type", "warnings", "surge_today", "sustained_accumulation",
+        "close", "market_cap",
         "rs_spy_20d", "rs_spy_50d", "rs_sector_20d",
         "close_to_50d_high",
         "ma_aligned", "golden_cross_recent",
@@ -2669,17 +2835,14 @@ def ticker_lookup(symbol: str) -> dict[str, object]:
         return bool(v)
 
     filters = {
-        "liquidity_ok":        safe_bool("liquidity_ok"),
-        "rs_spy_near_high":    safe_bool("rs_spy_near_high"),
-        "rs_positive":         safe_bool("rs_positive"),
-        "above_ma60":          safe_bool("above_ma60"),
-        "ma60_rising":         safe_bool("ma60_rising"),
-        "ma_aligned":          safe_bool("ma_aligned"),
-        "golden_cross_recent": safe_bool("golden_cross_recent"),
-        "near_50d_high":       safe_bool("near_50d_high"),
-        "not_overheated":      safe_bool("not_overheated"),
-        "passed_hard_filters": safe_bool("passed_hard_filters"),
-        "volume_quality":      safe_bool("volume_quality"),
+        "liquidity_ok":            safe_bool("liquidity_ok"),
+        "rs_positive":             safe_bool("rs_positive"),
+        "surge_today":             safe_bool("surge_today"),
+        "sustained_accumulation":  safe_bool("sustained_accumulation"),
+        "passed_hard_filters":     safe_bool("passed_hard_filters"),
+        "above_ma60":              safe_bool("above_ma60"),
+        "ma60_rising":             safe_bool("ma60_rising"),
+        "not_overheated":          safe_bool("not_overheated"),
     }
 
     grade = str(r.get("grade") or "")
@@ -2763,7 +2926,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             run = run_screener(
                 ticker_file=TICKER_FILE,
                 output_dir=OUTPUT_DIR,
-                min_dollar_volume=float(payload.get("min_dollar_volume", 20_000_000)),
+                min_dollar_volume=float(payload.get("min_dollar_volume", 50_000_000)),
                 write_files=True,
             )
             self.send_json(response_from_results(

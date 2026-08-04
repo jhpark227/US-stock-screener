@@ -33,7 +33,7 @@ class ScreenerConfig:
     volume_window: int = 20
     atr_window: int = 14
     rsi_window: int = 14
-    min_dollar_volume: float = 100_000_000
+    min_dollar_volume: float = 50_000_000
     rs_near_high_threshold: float = 0.98
     near_50d_high_threshold: float = 0.90
     volume_ratio_min: float = 1.3
@@ -41,6 +41,11 @@ class ScreenerConfig:
     volume_strength_interest: float = 1.5
     volume_strength_attention: float = 2.0
     volume_strength_conviction: float = 5.0
+    # 주목 트리거 (2026-08 백테스트로 결정: outputs/backtest/ 참조)
+    surge_ratio_min: float = 1.5          # 당일 서지 하한 — 20일 평균 거래량 대비
+    surge_ratio_max: float = 5.0          # 상한 — 이 이상은 어닝스 갭 의심, 트리거 제외+경고 라벨
+    accumulation_trigger_days: int = 6    # 10일 내 매집일 이 값 이상이면 지속 매집 트리거
+    distribution_warning_days: int = 3    # 10일 내 분산일 경고 라벨 기준
     accumulation_days_min: int = 3
     distribution_days_max: int = 1
     vp_lookback: int = 10
@@ -297,24 +302,14 @@ def calculate_rs_features(
     return result
 
 
-def evaluate_stock(
-    ticker: str,
-    meta: pd.Series,
-    prices: dict[str, pd.DataFrame],
+def compute_feature_frame(
+    stock: pd.DataFrame,
+    spy: pd.DataFrame,
+    qqq: pd.DataFrame,
+    sector: pd.DataFrame | None,
     config: ScreenerConfig,
-    market_state: str,
-) -> dict[str, object] | None:
-    stock = prices.get(ticker)
-    spy = prices.get("SPY")
-    qqq = prices.get("QQQ")
-    sector_etf = str(meta["sector_etf"])
-    sector = prices.get(sector_etf)
-
-    if stock is None or spy is None or qqq is None:
-        return None
-    if len(stock.dropna(subset=["Close"])) < config.min_history_days:
-        return None
-
+) -> pd.DataFrame:
+    """OHLCV → 전체 기간 피처 DataFrame. 마지막 행뿐 아니라 모든 날짜의 피처를 담는다."""
     frame = stock.copy()
     close = frame["Close"]
     high = frame["High"]
@@ -406,15 +401,23 @@ def evaluate_stock(
     vol_base = returns.rolling(40).std().shift(10)
     feature_frame["base_stability"] = (vol_base / vol_recent.replace(0, np.nan)).clip(upper=3.0) / 3.0
 
-    latest = feature_frame.dropna(subset=["Close", "ma60", "rs_spy_20d", "rs_spy_50d"]).tail(1)
-    if latest.empty:
-        return None
+    return feature_frame
 
-    row = latest.iloc[0]
+
+def evaluate_row(
+    ticker: str,
+    meta: pd.Series,
+    row: pd.Series,
+    has_sector: bool,
+    market_state: str,
+    config: ScreenerConfig,
+) -> dict[str, object]:
+    """피처 행 하나를 받아 필터 판정·등급·매수기준가를 계산한다. row.name은 날짜 인덱스."""
+    sector_etf = str(meta["sector_etf"])
     liquidity_ok = row["avg_dollar_volume_20d"] >= config.min_dollar_volume
     rs_near_high = bool(row["rs_spy_near_high"])
     rs_positive = row["rs_spy_20d"] > 0
-    rs_sector_positive = sector is None or row["rs_sector_20d"] > 0
+    rs_sector_positive = (not has_sector) or row["rs_sector_20d"] > 0
     above_ma60 = row["Close"] > row["ma60"]
     ma60_rising = bool(row["ma60_rising"])
     ma_aligned = bool(row["ma_aligned"]) if not pd.isna(row.get("ma_aligned", np.nan)) else False
@@ -433,22 +436,48 @@ def evaluate_stock(
         accumulation_days >= config.accumulation_days_min
         and distribution_days <= config.distribution_days_max
     )
-    # 하드 필터: 절대 배제 조건만
-    # - 유동성, RS+, MA60 위/상승, 정배열 또는 최근 골든크로스, 과열 X
-    passed = all(
-        [
-            liquidity_ok,
-            rs_positive,
-            above_ma60,
-            ma60_rising,
-            trend_structure_ok,
-            not_overheated,
-        ]
-    )
 
+    # 주목 트리거: ① 당일 서지 (거래량 1.5~5배 + 양봉) ② 지속 매집 (10일 내 매집일 6+)
+    daily_return_val = row["daily_return"]
+    volume_ratio_val = row["volume_ratio"]
+    surge_today = (
+        not pd.isna(daily_return_val)
+        and not pd.isna(volume_ratio_val)
+        and daily_return_val > 0
+        and config.surge_ratio_min <= volume_ratio_val < config.surge_ratio_max
+    )
+    sustained_accumulation = accumulation_days >= config.accumulation_trigger_days
+    if surge_today and sustained_accumulation:
+        signal_type = "surge+acc"
+    elif surge_today:
+        signal_type = "surge"
+    elif sustained_accumulation:
+        signal_type = "acc"
+    else:
+        signal_type = ""
+
+    # 하드 필터: 유동성 + RS+ + 거래량 트리거. MA/과열은 배제하지 않고 등급·경고로 표시
+    passed = liquidity_ok and rs_positive and (surge_today or sustained_accumulation)
+
+    # 등급 = MA 컨텍스트: A = MA60 위 + MA60 상승, B = 그 외
     grade = ""
     if passed:
-        grade = "A" if volume_quality else "B"
+        grade = "A" if (above_ma60 and ma60_rising) else "B"
+
+    # 경고 라벨 (참고 정보 — 배제 아님)
+    warning_labels = []
+    if not not_overheated:
+        warning_labels.append("과열")
+    if (
+        not pd.isna(volume_ratio_val)
+        and not pd.isna(daily_return_val)
+        and volume_ratio_val >= config.surge_ratio_max
+        and daily_return_val > 0
+    ):
+        warning_labels.append("거래량5x+")
+    if distribution_days >= config.distribution_warning_days:
+        warning_labels.append(f"분산{distribution_days}일")
+    warnings = ",".join(warning_labels)
 
     current_close = float(row["Close"])
     ma20_val = float(row["ma20"]) if not pd.isna(row.get("ma20", np.nan)) else None
@@ -474,7 +503,7 @@ def evaluate_stock(
         "sector": meta["sector"],
         "sector_etf": sector_etf,
         "market_cap": float(meta.get("market_cap") or 0),
-        "date": latest.index[-1].date().isoformat(),
+        "date": row.name.date().isoformat(),
         "close": current_close,
         "daily_return": row["daily_return"],
         "return_5d": row["return_5d"],
@@ -505,6 +534,10 @@ def evaluate_stock(
         "accumulation_days_10d": accumulation_days,
         "distribution_days_10d": distribution_days,
         "volume_strength": row["volume_strength"],
+        "surge_today": surge_today,
+        "sustained_accumulation": sustained_accumulation,
+        "signal_type": signal_type,
+        "warnings": warnings,
         "atr_ratio": row["atr_ratio"],
         "rsi_14": row["rsi_14"],
         "liquidity_ok": liquidity_ok,
@@ -523,6 +556,35 @@ def evaluate_stock(
     }
 
 
+FEATURE_REQUIRED_COLUMNS = ["Close", "ma60", "rs_spy_20d", "rs_spy_50d"]
+
+
+def evaluate_stock(
+    ticker: str,
+    meta: pd.Series,
+    prices: dict[str, pd.DataFrame],
+    config: ScreenerConfig,
+    market_state: str,
+) -> dict[str, object] | None:
+    stock = prices.get(ticker)
+    spy = prices.get("SPY")
+    qqq = prices.get("QQQ")
+    sector_etf = str(meta["sector_etf"])
+    sector = prices.get(sector_etf)
+
+    if stock is None or spy is None or qqq is None:
+        return None
+    if len(stock.dropna(subset=["Close"])) < config.min_history_days:
+        return None
+
+    feature_frame = compute_feature_frame(stock, spy, qqq, sector, config)
+    latest = feature_frame.dropna(subset=FEATURE_REQUIRED_COLUMNS).tail(1)
+    if latest.empty:
+        return None
+
+    return evaluate_row(ticker, meta, latest.iloc[0], sector is not None, market_state, config)
+
+
 def add_scores(results: pd.DataFrame) -> pd.DataFrame:
     results = results.copy()
     if results.empty:
@@ -530,21 +592,20 @@ def add_scores(results: pd.DataFrame) -> pd.DataFrame:
         return results
 
     # 전체 종목에 스코어 부여 — 하드 필터 통과 여부와 무관하게 순위 파악 가능
+    # v2 (2026-08): 백테스트 IC 근거 재가중 — RS 계열만 유의(t>3.4), 당일 봉/베이스 피처는 예측력 없어 제외
     scored = results.copy()
-    # RS 가속도: 단기 RS가 중기 RS를 상회하면 모멘텀 개선 중
-    rs_acceleration = scored["rs_spy_20d"] - scored["rs_spy_50d"]
 
     scored["score"] = (
-        0.20 * scored["rs_spy_20d"].rank(pct=True)          # 단기 RS 방향
-        + 0.25 * scored["rs_spy_50d"].rank(pct=True)         # 중기 RS 수준 (안정성)
-        + 0.15 * rs_acceleration.rank(pct=True)              # RS 가속도 (근접도 대체)
-        + 0.15 * scored["rs_sector_20d"].rank(pct=True, na_option="bottom")  # 섹터 RS
-        + 0.15 * scored["close_to_50d_high"].rank(pct=True)  # 가격 고점 근접도
-        + 0.10 * scored["capped_volume_ratio"].rank(pct=True) # 거래량
+        0.30 * scored["rs_spy_20d"].rank(pct=True)                                  # 단기 RS — 최대 IC
+        + 0.25 * scored["rs_spy_50d"].rank(pct=True)                                # 중기 RS
+        + 0.25 * scored["rs_sector_20d"].rank(pct=True, na_option="bottom")         # 섹터 RS
+        + 0.10 * scored["accumulation_days_10d"].rank(pct=True, na_option="bottom")  # 매집 지속성
+        + 0.10 * scored["volume_trend"].rank(pct=True, na_option="bottom")          # 거래량 증가 추세
     )
+
     results["score"] = scored["score"]
     return results.sort_values(
-        ["passed_hard_filters", "score", "rs_spy_20d"],
+        ["passed_hard_filters", "score", "close_to_50d_high"],
         ascending=[False, False, False],
     )
 
@@ -564,7 +625,7 @@ def run_screener(
     ticker_file: Path = DEFAULT_TICKER_FILE,
     output_dir: Path = DEFAULT_OUTPUT_DIR,
     period: str = "2y",
-    min_dollar_volume: float = 20_000_000,
+    min_dollar_volume: float = 50_000_000,
     write_files: bool = True,
 ) -> ScreenerRun:
     config = ScreenerConfig(
@@ -667,18 +728,15 @@ def main() -> None:
             "name",
             "sector",
             "grade",
+            "signal_type",
             "score",
             "rs_spy_20d",
             "rs_spy_50d",
             "rs_sector_20d",
-            "close_to_50d_high",
-            "ma_aligned",
-            "golden_cross_recent",
-            "vp_signal",
-            "volume_strength",
+            "volume_ratio",
             "accumulation_days_10d",
-            "distribution_days_10d",
-            "rsi_14",
+            "buy_price",
+            "warnings",
         ]
         print()
         print(format_percent_columns(candidates.head(args.top)[display_columns]).to_string(index=False))
