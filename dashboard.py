@@ -56,6 +56,9 @@ INDEX_HTML = r"""
       font-family: 'DM Sans', 'Noto Sans KR', ui-sans-serif, system-ui, sans-serif;
       font-size: 14px;
       line-height: 1.45;
+      word-break: keep-all;
+      overflow-wrap: break-word;
+      line-break: strict;
     }
 
     button, input, select { font: inherit; }
@@ -408,6 +411,24 @@ INDEX_HTML = r"""
       color: var(--muted);
     }
 
+    .candidate-help {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 8px 20px;
+      margin: 2px 0 12px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .candidate-help-item {
+      min-width: 0;
+      padding-left: 10px;
+      border-left: 2px solid var(--line);
+    }
+
+    .candidate-help-item b { color: var(--text); }
+
     /* Table */
     .table-wrap {
       overflow-x: auto;
@@ -707,8 +728,6 @@ INDEX_HTML = r"""
     .ec-note {
       font-size: 12.5px;
       line-height: 1.55;
-      max-width: 70ch;
-      overflow-wrap: anywhere;
     }
     .ec-note.fallback { color: var(--muted); }
 
@@ -743,7 +762,7 @@ INDEX_HTML = r"""
       text-overflow: ellipsis;
       white-space: nowrap;
     }
-    .wr-reason { font-size: 12px; line-height: 1.5; max-width: 70ch; overflow-wrap: anywhere; }
+    .wr-reason { min-width: 0; font-size: 12px; line-height: 1.5; }
     .wr-nums {
       font-family: 'DM Mono', 'Noto Sans KR', monospace;
       font-size: 11.5px;
@@ -777,7 +796,7 @@ INDEX_HTML = r"""
     }
     .skip-row:last-child { border-bottom: 0; }
     .skip-row .sr-ticker { font-family: 'DM Mono', 'Noto Sans KR', monospace; font-weight: 700; cursor: pointer; border-bottom: 1px dotted var(--accent); align-self: start; justify-self: start; }
-    .skip-row .sr-reason { color: var(--muted); font-size: 11.5px; line-height: 1.5; max-width: 70ch; }
+    .skip-row .sr-reason { min-width: 0; color: var(--muted); font-size: 11.5px; line-height: 1.5; }
 
     .badge {
       display: inline-flex;
@@ -827,8 +846,13 @@ INDEX_HTML = r"""
     .desc summary::-webkit-details-marker { display: none; }
     .desc summary::before { content: "▶"; font-size: 10px; transition: transform 0.15s; }
     .desc[open] summary::before { transform: rotate(90deg); }
-    .desc ul { margin: 10px 0 0; padding-left: 18px; }
-    .desc li { margin-bottom: 4px; }
+    .desc ul {
+      margin: 10px 0 0;
+      padding-left: 18px;
+      columns: 2 360px;
+      column-gap: 40px;
+    }
+    .desc li { margin-bottom: 8px; break-inside: avoid; }
     .desc li strong { color: var(--text); }
 
     /* ---- 리포트 헤더 밴드 (리서치 노트 문법: 굵은 잉크 룰 + 키커 + 무배경, 색은 배지에만) ---- */
@@ -884,7 +908,7 @@ INDEX_HTML = r"""
     .market-banner.pressure   .mb-badge { background: #fef6e8; color: var(--warn); }
     .market-banner.correction .mb-badge { background: #fdf0ef; color: var(--danger); }
 
-    .market-banner .mb-desc { color: var(--muted); max-width: 70ch; }
+    .market-banner .mb-desc { color: var(--muted); }
 
     .market-banner .mb-ai {
       margin-top: 12px;
@@ -894,14 +918,14 @@ INDEX_HTML = r"""
       font-size: 12.5px;
     }
     .market-banner .mb-ai-head { margin-bottom: 6px; }
-    /* 라벨 붙은 독립 라인이라 2열 그리드 가능 — 열당 ~60ch 유지하며 전체 폭 사용 */
+    /* 각 열이 충분히 넓은 PC에서만 2열로 표시 */
     .market-banner .mb-ai-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
       column-gap: 28px;
       row-gap: 7px;
     }
-    @media (max-width: 900px) {
+    @media (max-width: 1100px) {
       .market-banner .mb-ai-grid { grid-template-columns: 1fr; }
     }
     .market-banner .mb-ai-row {
@@ -917,7 +941,7 @@ INDEX_HTML = r"""
       letter-spacing: 0.02em;
       padding-top: 1px;
     }
-    .market-banner .mb-ai-text { flex: 1; }
+    .market-banner .mb-ai-text { flex: 1; min-width: 0; }
     .market-banner .mb-ai .mb-ai-tag {
       display: inline-block;
       font-size: 10px;
@@ -946,18 +970,25 @@ INDEX_HTML = r"""
       margin: 0;
       padding: 0;
       list-style: none;
-      display: flex;
-      flex-direction: column;
-      gap: 7px;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 7px 28px;
     }
 
     .insight-bar li {
+      display: grid;
+      grid-template-columns: max-content minmax(0, 1fr);
+      align-items: start;
+      column-gap: 8px;
       font-size: 13px;
       line-height: 1.55;
       color: var(--text);
       padding-left: 16px;
       position: relative;
-      max-width: 70ch;
+    }
+
+    @media (max-width: 1100px) {
+      .insight-bar ul { grid-template-columns: 1fr; }
     }
 
     .insight-bar li::before {
@@ -974,11 +1005,12 @@ INDEX_HTML = r"""
       font-weight: 700;
       padding: 1px 6px;
       border-radius: 4px;
-      margin-right: 6px;
       background: var(--accent-soft);
       color: var(--accent);
       vertical-align: middle;
     }
+
+    .insight-bar li .insight-text { min-width: 0; }
 
     .insight-bar li .tag.warn {
       background: #eee9d9;
@@ -1683,7 +1715,12 @@ INDEX_HTML = r"""
       .wr-reason { grid-column: 1 / -1; }
       .skip-row { grid-template-columns: 84px minmax(0, 1fr); }
       .diff-top { margin-top: 0; }
-      .candidate-help { font-size: 11px !important; line-height: 1.55 !important; }
+      .candidate-help {
+        grid-template-columns: 1fr;
+        gap: 6px;
+        font-size: 11px;
+        line-height: 1.55;
+      }
 
       .table-wrap {
         max-height: none;
@@ -2194,8 +2231,10 @@ INDEX_HTML = r"""
           </select>
         </div>
       </div>
-      <div class="candidate-help" style="font-size:12px;color:var(--muted);margin:2px 0 10px;line-height:1.6;max-width:70ch">
-        전체 후보 목록 (부록) — 아침 판단은 상단 <b>오늘의 판단</b> 카드에서 끝내고, 여기서는 판정·신규 필터로 후보 전체를 훑거나 정렬해 교차 확인하세요. <b>D+ = NEW</b>는 오늘 신규 트리거, D+1~4는 관찰 유지 중(트리거 후 5거래일, RS 꺾이면 자동 탈락). 기준가 대비 +5% 초과(⚠)는 추격 구간.
+      <div class="candidate-help">
+        <div class="candidate-help-item"><b>목록 사용</b> — 아침 판단은 상단 <b>오늘의 판단</b> 카드에서 끝내고, 여기서는 판정·신규 필터와 정렬로 후보 전체를 교차 확인하세요.</div>
+        <div class="candidate-help-item"><b>D+ 표기</b> — NEW는 오늘 신규 트리거, D+1~4는 관찰 유지 중입니다. 트리거 후 5거래일이 지나거나 RS가 꺾이면 자동 탈락합니다.</div>
+        <div class="candidate-help-item"><b>추격 경고</b> — 기준가 대비 +5% 초과(⚠)는 추격 구간입니다.</div>
       </div>
       <div class="table-wrap" id="candidateTable"></div>
     </section>
@@ -2473,24 +2512,26 @@ INDEX_HTML = r"""
       const numSectors = sortedSec.filter(([,c]) => c > 0).length;
 
       const items = [];
+      const insightItem = (label, text, tone = "") =>
+        `<span class="tag ${tone}">${escapeHtml(label)}</span><span class="insight-text">${text}</span>`;
 
       // 1. 시장 폭 (RS 20D > 0 통과율 기반)
       if (rsPassPct < 20) {
-        items.push(`<span class="tag warn">좁은 시장</span>전체 ${total}개 중 ${rsStep?.count || 0}개(${rsPassPct.toFixed(0)}%)만 SPY 대비 20일 RS 양수 — 지수 상승을 이끄는 종목이 소수. 후보군이 압축될수록 통과 종목의 신뢰도는 높아집니다.`);
+        items.push(insightItem("좁은 시장", `전체 ${total}개 중 ${rsStep?.count || 0}개(${rsPassPct.toFixed(0)}%)만 SPY 대비 20일 RS 양수 — 지수 상승을 이끄는 종목이 소수. 후보군이 압축될수록 통과 종목의 신뢰도는 높아집니다.`, "warn"));
       } else if (rsPassPct < 40) {
-        items.push(`<span class="tag neutral">선별적 강세</span>전체의 ${rsPassPct.toFixed(0)}%가 SPY 대비 RS 양수 — 일부 섹터에서 주도주가 형성되는 국면. 섹터 선택이 중요합니다.`);
+        items.push(insightItem("선별적 강세", `전체의 ${rsPassPct.toFixed(0)}%가 SPY 대비 RS 양수 — 일부 섹터에서 주도주가 형성되는 국면. 섹터 선택이 중요합니다.`, "neutral"));
       } else {
-        items.push(`<span class="tag">광범위 강세</span>전체의 ${rsPassPct.toFixed(0)}%가 시장 수익률 상회 — 개별주 전반에 걸쳐 강세 흐름. 종목 선택의 폭이 넓습니다.`);
+        items.push(insightItem("광범위 강세", `전체의 ${rsPassPct.toFixed(0)}%가 시장 수익률 상회 — 개별주 전반에 걸쳐 강세 흐름. 종목 선택의 폭이 넓습니다.`));
       }
 
       // 2. 섹터 집중도
       if (candidates > 0) {
         if (top2Pct >= 55 && top1 && top2) {
-          items.push(`<span class="tag">섹터 집중</span>후보 ${candidates}개 중 ${top2Count}개(${top2Pct.toFixed(0)}%)가 ${escapeHtml(top1[0])}·${escapeHtml(top2[0])}에 몰림 — 현재 장의 주도 섹터가 뚜렷합니다.`);
+          items.push(insightItem("섹터 집중", `후보 ${candidates}개 중 ${top2Count}개(${top2Pct.toFixed(0)}%)가 ${escapeHtml(top1[0])}·${escapeHtml(top2[0])}에 몰림 — 현재 장의 주도 섹터가 뚜렷합니다.`));
         } else if (top2Pct >= 55 && top1) {
-          items.push(`<span class="tag">섹터 집중</span>후보 ${candidates}개 중 ${top1[1]}개(${(top1[1]/candidates*100).toFixed(0)}%)가 ${escapeHtml(top1[0])}에 집중 — 이 섹터가 현재 시장 주도.`);
+          items.push(insightItem("섹터 집중", `후보 ${candidates}개 중 ${top1[1]}개(${(top1[1]/candidates*100).toFixed(0)}%)가 ${escapeHtml(top1[0])}에 집중 — 이 섹터가 현재 시장 주도.`));
         } else {
-          items.push(`<span class="tag neutral">분산</span>후보가 ${numSectors}개 섹터에 분산 — 특정 테마 없이 개별 종목 장세. 섹터보다 종목 자체의 RS·거래량 확인이 중요합니다.`);
+          items.push(insightItem("분산", `후보가 ${numSectors}개 섹터에 분산 — 특정 테마 없이 개별 종목 장세. 섹터보다 종목 자체의 RS·거래량 확인이 중요합니다.`, "neutral"));
         }
       }
 
@@ -2501,9 +2542,10 @@ INDEX_HTML = r"""
         const surgeN = cands.filter(r => r.signal_type === "surge").length;
         const accN   = cands.filter(r => r.signal_type === "acc").length;
         if (both > 0) {
-          items.push(`<span class="tag">최우선 신호</span>급증+매집 동시 신호 ${both}개 — 백테스트상 가장 강한 조합. 최우선 검토 대상.`);
+          items.push(insightItem("최우선 신호", `급증+매집 동시 신호 ${both}개 — 백테스트상 가장 강한 조합. 최우선 검토 대상.`));
         }
-        items.push(`<span class="tag neutral">신호 구성</span>당일 급증 ${surgeN}개 · 지속 매집 ${accN}개 · 동시 ${both}개 — 급증는 즉시성, 매집은 지속성 신호. ⚠ 라벨 종목은 고수익·고위험 구간이니 포지션 크기로 관리.`);
+        items.push(insightItem("신호 구성", `당일 급증 ${surgeN}개 · 지속 매집 ${accN}개 · 동시 ${both}개 — 급증은 즉시성, 매집은 지속성 신호.`, "neutral"));
+        items.push(insightItem("리스크", "⚠ 라벨 종목은 고수익·고위험 구간이므로 포지션 크기로 관리합니다.", "warn"));
 
         // 4. 신고가 리더 (조정장에서는 역행 리더로 강조)
         const newHighs = cands.filter(r => (r.close_to_50d_high ?? 0) >= 0.99);
@@ -2511,9 +2553,9 @@ INDEX_HTML = r"""
           const names = newHighs.slice(0, 8).map(r => r.ticker).join(", ");
           const suffix = newHighs.length > 8 ? " 외" : "";
           if ((data.market_state || "") === "Market in Correction") {
-            items.push(`<span class="tag">역행 리더</span>조정장 속 50일 신고가 ${newHighs.length}개 (${names}${suffix}) — 시장과 역행하는 상대강도 리더. 조정 종료 시 주도주가 될 확률이 높은 그룹.`);
+            items.push(insightItem("역행 리더", `조정장 속 50일 신고가 ${newHighs.length}개 (${escapeHtml(names)}${suffix}) — 시장과 역행하는 상대강도 리더. 조정 종료 시 주도주가 될 확률이 높은 그룹.`));
           } else {
-            items.push(`<span class="tag">신고가</span>50일 신고가 돌파/근접 ${newHighs.length}개 (${names}${suffix}).`);
+            items.push(insightItem("신고가", `50일 신고가 돌파/근접 ${newHighs.length}개 (${escapeHtml(names)}${suffix}).`));
           }
         }
       }
@@ -3001,7 +3043,7 @@ INDEX_HTML = r"""
         if (row.warnings) pills.push(`<span class="mcc-pill warn">⚠ ${escapeHtml(row.warnings)}</span>`);
         // 판정 사유 인라인 — 모바일에는 title 툴팁이 없으므로 카드에 직접 노출
         const reasonLine = row.verdict && row.verdict_reason
-          ? `<div style="margin-top:7px;font-size:11px;line-height:1.5;color:var(--muted);overflow-wrap:anywhere">${escapeHtml(row.verdict_reason)}</div>`
+          ? `<div style="margin-top:7px;font-size:11px;line-height:1.5;color:var(--muted)">${escapeHtml(row.verdict_reason)}</div>`
           : "";
 
         const metrics = [
