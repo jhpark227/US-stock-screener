@@ -1947,7 +1947,7 @@ INDEX_HTML = r"""
     <div id="homeView" hidden>
       <div class="hm-page">
         <p class="hm-eyebrow">US Stock Screener</p>
-        <h2 class="hm-title">미국 주식 1,000개 중에서,<br>오늘 지켜볼 30개를 골라주는 도구</h2>
+        <h2 class="hm-title">미국 주식 1,000개 중에서,<br>오늘 지켜볼 후보만 골라주는 도구</h2>
         <p class="hm-lede">
           매일 장 마감 후 자동으로 돌아가는 개인용 스크리너입니다. 종목을 <strong>사주는 것이 아니라</strong>,
           관찰할 가치가 있는 후보를 <strong>추려서 순서대로 보여주는</strong> 것까지가 이 도구의 일입니다.
@@ -1975,7 +1975,7 @@ INDEX_HTML = r"""
           </div>
           <div class="hm-gate">
             <p class="hm-gname"><span class="hm-idx">①</span>사고팔기 충분한가 <span class="hm-count" id="hmGate1"></span></p>
-            <p class="hm-gwhy">하루 500억 원어치 이상 거래되는 종목만. 내 주문이 가격을 밀지 않아야 합니다.</p>
+            <p class="hm-gwhy">하루 5천만 달러(약 700억 원)어치 이상 거래되는 종목만. 내 주문이 가격을 밀지 않아야 합니다.</p>
             <span class="hm-chip">20일 평균 거래대금 ≥ $50M</span>
           </div>
           <div class="hm-gate">
@@ -1985,8 +1985,8 @@ INDEX_HTML = r"""
           </div>
           <div class="hm-gate">
             <p class="hm-gname"><span class="hm-idx">③</span>거래량 사건이 있었나 <span class="hm-count" id="hmGate3"></span></p>
-            <p class="hm-gwhy">아래 두 신호 중 하나라도 켜져야 합니다. 아무 일도 없는 종목은 후보가 아닙니다.</p>
-            <span class="hm-chip">당일 급증 OR 지속 매집</span>
+            <p class="hm-gwhy">최근 5거래일 안에 아래 두 신호 중 하나라도 켜졌어야 합니다. 아무 일도 없는 종목은 후보가 아닙니다.</p>
+            <span class="hm-chip">5일 내 급증 OR 지속 매집</span>
           </div>
           <div class="hm-pool hm-result">
             <span class="hm-n" id="hmCands">—</span>
@@ -2001,7 +2001,7 @@ INDEX_HTML = r"""
           <div class="hm-signals">
             <div class="hm-card hm-sig">
               <h4>급증 <span class="hm-chip">surge</span></h4>
-              <p>오늘 하루 거래량이 평소의 1.5~5배로 튀면서 주가도 올랐다. 방금 시장의 주목을 받기 시작했다는 뜻.</p>
+              <p>하루 거래량이 평소의 1.5~5배로 튀면서 주가도 올랐다. 방금 시장의 주목을 받기 시작했다는 뜻.</p>
             </div>
             <div class="hm-card hm-sig">
               <h4>매집 <span class="hm-chip">acc</span></h4>
@@ -2094,7 +2094,7 @@ INDEX_HTML = r"""
         </section>
 
         <div class="hm-footer">
-          데이터: yfinance 일봉 · 매일 장 마감 후 자동 실행 · 수치 근거는 저장소의 outputs/backtest/ 참조
+          데이터: yfinance 일봉 · 매일 장 마감 후 자동 실행 · 수치는 로컬 백테스트 산출물(outputs/backtest/) 기준
         </div>
       </div>
     </div>
