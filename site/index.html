@@ -8,7 +8,7 @@
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%2318745a'/><polyline points='5 22 11 22 13 17 16 25 19 10 22 15 27 9' fill='none' stroke='white' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,700;1,9..40,400&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,700;1,9..40,400&family=DM+Mono:wght@400;500&family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
   <style>
     :root {
       color-scheme: light;
@@ -30,7 +30,7 @@
       margin: 0;
       background: var(--bg);
       color: var(--text);
-      font-family: 'DM Sans', ui-sans-serif, system-ui, sans-serif;
+      font-family: 'DM Sans', 'Noto Sans KR', ui-sans-serif, system-ui, sans-serif;
       font-size: 14px;
       line-height: 1.45;
     }
@@ -465,7 +465,7 @@
     tbody tr:hover { background: #f6f9f7; }
     tfoot tr { border-top: 2px solid var(--line); background: #f6f9f7; }
 
-    .num { text-align: right; font-variant-numeric: tabular-nums; font-family: 'DM Mono', monospace; font-size: 13px; }
+    .num { text-align: right; font-variant-numeric: tabular-nums; font-family: 'DM Mono', 'Noto Sans KR', monospace; font-size: 13px; }
 
     /* Name 컬럼(4번째)은 말줄임 — 긴 종목명이 결정 컬럼들을 밀어내지 않게 */
     #candidateTable td:nth-child(4) {
@@ -488,8 +488,8 @@
     .dp-seg { width: 5px; height: 5px; border-radius: 2px; background: #ededeb; }
     .dp-seg.on { background: var(--accent); opacity: 0.75; }
     .center { text-align: center; font-size: 12px; }
-    .rank { text-align: right; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; font-family: 'DM Mono', monospace; width: 32px; }
-    .ticker { font-weight: 700; font-family: 'DM Mono', monospace; letter-spacing: 0.02em; }
+    .rank { text-align: right; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; font-family: 'DM Mono', 'Noto Sans KR', monospace; width: 32px; }
+    .ticker { font-weight: 700; font-family: 'DM Mono', 'Noto Sans KR', monospace; letter-spacing: 0.02em; }
 
     /* diff badge column */
     .diff-badge-cell { width: 36px; padding: 0 4px 0 8px; }
@@ -504,13 +504,13 @@
     .diff-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
     /* 라벨-값 스타일 (리포트 문법): 무배경 사각 칩, 색은 값 숫자에만 */
     .diff-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 4px; font-size: 12px; font-weight: 500; border: 1px solid var(--line); background: none; color: var(--muted); }
-    .diff-chip .count { font-weight: 700; font-family: 'DM Mono', monospace; }
+    .diff-chip .count { font-weight: 700; font-family: 'DM Mono', 'Noto Sans KR', monospace; }
     .diff-chip.new-in .count     { color: var(--accent); }
     .diff-chip.dropped .count    { color: var(--danger); }
     .diff-chip.upgraded .count   { color: var(--accent); }
     .diff-chip.downgraded .count { color: var(--warn); }
     .diff-tickers { font-size: 12px; color: var(--muted); line-height: 1.8; }
-    .diff-tickers strong { color: var(--text); font-family: 'DM Mono', monospace; font-size: 11px; }
+    .diff-tickers strong { color: var(--text); font-family: 'DM Mono', 'Noto Sans KR', monospace; font-size: 11px; }
 
     /* 전일 대비 diff — 상단 슬림 스트립 (아침의 첫 질문 "뭐가 바뀌었나"를 최상단에) */
     .diff-top {
@@ -596,7 +596,7 @@
     }
     .ec-id { min-width: 0; flex: 1; }
     .ec-ticker {
-      font-family: 'DM Mono', monospace;
+      font-family: 'DM Mono', 'Noto Sans KR', monospace;
       font-size: 16px;
       font-weight: 700;
       letter-spacing: 0.02em;
@@ -613,7 +613,7 @@
       margin-top: 2px;
     }
     .ec-score {
-      font-family: 'DM Mono', monospace;
+      font-family: 'DM Mono', 'Noto Sans KR', monospace;
       font-size: 17px;
       font-weight: 700;
       text-align: right;
@@ -622,7 +622,7 @@
     .ec-score small {
       display: block;
       color: var(--muted);
-      font-family: 'DM Sans', sans-serif;
+      font-family: 'DM Sans', 'Noto Sans KR', sans-serif;
       font-size: 10px;
       font-weight: 500;
     }
@@ -673,7 +673,7 @@
     .ec-num strong {
       display: block;
       margin-top: 2px;
-      font-family: 'DM Mono', monospace;
+      font-family: 'DM Mono', 'Noto Sans KR', monospace;
       font-size: 12.5px;
       font-weight: 600;
     }
@@ -707,7 +707,7 @@
     .wait-row:last-child { border-bottom: 0; }
     .wr-id { min-width: 0; }
     .wr-ticker {
-      font-family: 'DM Mono', monospace;
+      font-family: 'DM Mono', 'Noto Sans KR', monospace;
       font-weight: 700;
       cursor: pointer;
       border-bottom: 1px dotted var(--accent);
@@ -722,7 +722,7 @@
     }
     .wr-reason { font-size: 12px; line-height: 1.5; max-width: 70ch; overflow-wrap: anywhere; }
     .wr-nums {
-      font-family: 'DM Mono', monospace;
+      font-family: 'DM Mono', 'Noto Sans KR', monospace;
       font-size: 11.5px;
       color: var(--muted);
       white-space: nowrap;
@@ -753,7 +753,7 @@
       border-bottom: 1px solid #f0f0ec;
     }
     .skip-row:last-child { border-bottom: 0; }
-    .skip-row .sr-ticker { font-family: 'DM Mono', monospace; font-weight: 700; cursor: pointer; border-bottom: 1px dotted var(--accent); align-self: start; justify-self: start; }
+    .skip-row .sr-ticker { font-family: 'DM Mono', 'Noto Sans KR', monospace; font-weight: 700; cursor: pointer; border-bottom: 1px dotted var(--accent); align-self: start; justify-self: start; }
     .skip-row .sr-reason { color: var(--muted); font-size: 11.5px; line-height: 1.5; max-width: 70ch; }
 
     .badge {
@@ -1020,7 +1020,7 @@
     }
 
     .cc-count {
-      font-family: 'DM Mono', monospace;
+      font-family: 'DM Mono', 'Noto Sans KR', monospace;
       font-size: 11px;
       font-weight: 600;
       background: var(--accent-soft);
@@ -1050,7 +1050,7 @@
     }
 
     .cc-ticker {
-      font-family: 'DM Mono', monospace;
+      font-family: 'DM Mono', 'Noto Sans KR', monospace;
       font-size: 11px;
       font-weight: 600;
       color: var(--accent);
@@ -1139,7 +1139,7 @@
       width: 120px;
       min-height: 34px;
       text-transform: uppercase;
-      font-family: 'DM Mono', monospace;
+      font-family: 'DM Mono', 'Noto Sans KR', monospace;
       font-weight: 500;
       letter-spacing: 0.05em;
     }
@@ -1226,14 +1226,14 @@
     .tr-inline-chart-period {
       font-size: 10px;
       font-weight: 700;
-      font-family: 'DM Mono', monospace;
+      font-family: 'DM Mono', 'Noto Sans KR', monospace;
       letter-spacing: 0.04em;
       color: var(--muted);
     }
 
     .tr-inline-chart-return {
       font-size: 11px;
-      font-family: 'DM Mono', monospace;
+      font-family: 'DM Mono', 'Noto Sans KR', monospace;
     }
 
     .tr-inline-chart-return.pos { color: var(--accent); }
@@ -1277,7 +1277,7 @@
     }
 
     .chart-modal-ticker {
-      font-family: 'DM Mono', monospace;
+      font-family: 'DM Mono', 'Noto Sans KR', monospace;
       font-size: 20px;
       font-weight: 700;
       letter-spacing: 0.03em;
@@ -1329,7 +1329,7 @@
     }
 
     .chart-cell-period {
-      font-family: 'DM Mono', monospace;
+      font-family: 'DM Mono', 'Noto Sans KR', monospace;
       font-size: 11px;
       font-weight: 700;
       color: var(--muted);
@@ -1337,7 +1337,7 @@
     }
 
     .chart-cell-return {
-      font-family: 'DM Mono', monospace;
+      font-family: 'DM Mono', 'Noto Sans KR', monospace;
       font-size: 12px;
       font-weight: 650;
     }
@@ -1690,7 +1690,7 @@
 
       .mcc-rank {
         color: var(--muted);
-        font-family: 'DM Mono', monospace;
+        font-family: 'DM Mono', 'Noto Sans KR', monospace;
         font-size: 11px;
       }
 
@@ -1706,7 +1706,7 @@
       }
 
       .mcc-score {
-        font-family: 'DM Mono', monospace;
+        font-family: 'DM Mono', 'Noto Sans KR', monospace;
         font-size: 18px;
         font-weight: 700;
         text-align: right;
@@ -1715,7 +1715,7 @@
       .mcc-score small {
         display: block;
         color: var(--muted);
-        font-family: 'DM Sans', sans-serif;
+        font-family: 'DM Sans', 'Noto Sans KR', sans-serif;
         font-size: 10px;
         font-weight: 500;
       }
@@ -1775,7 +1775,7 @@
       .mcc-metric strong {
         display: block;
         margin-top: 2px;
-        font-family: 'DM Mono', monospace;
+        font-family: 'DM Mono', 'Noto Sans KR', monospace;
         font-size: 12px;
       }
 
