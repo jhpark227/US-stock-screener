@@ -43,12 +43,12 @@ class ScreenerConfig:
     volume_strength_interest: float = 1.5
     volume_strength_attention: float = 2.0
     volume_strength_conviction: float = 5.0
-    # 주목 트리거 (2026-08 백테스트로 결정: outputs/backtest/ 참조)
+    # 거래량 신호 (2026-08 백테스트로 결정: outputs/backtest/ 참조)
     surge_ratio_min: float = 1.5          # 당일 서지 하한 — 20일 평균 거래량 대비
-    surge_ratio_max: float = 5.0          # 상한 — 이 이상은 어닝스 갭 의심, 트리거 제외+경고 라벨
-    accumulation_trigger_days: int = 6    # 10일 내 매집일 이 값 이상이면 지속 매집 트리거
-    # 지속창: 트리거 후 이 거래일 수 동안 후보 유지 (당일 포함). 지연 진입 백테스트(2026-08-21,
-    # 신규 트리거 7,739건) 근거 — 알파 감쇠는 첫 2일에 집중되고 k=3~7일에도 당일의 ~70% 유지.
+    surge_ratio_max: float = 5.0          # 상한 — 이 이상은 어닝스 갭 의심, 신호 제외+경고 라벨
+    accumulation_trigger_days: int = 6    # 10일 내 매집일 이 값 이상이면 지속 매집 신호
+    # 관찰기간: 신호 후 이 거래일 수 동안 후보 유지 (당일 포함). 지연 진입 백테스트(2026-08-21,
+    # 신규 신호 7,739건) 근거 — 알파 감쇠는 첫 2일에 집중되고 k=3~7일에도 당일의 ~70% 유지.
     trigger_window_days: int = 5
     distribution_warning_days: int = 3    # 10일 내 분산일 경고 라벨 기준
     regime_fit_bonus: float = 0.10        # 국면-등급 정합 후보 점수 보너스 (CU→A, Correction→B)
@@ -455,8 +455,8 @@ def compute_feature_frame(
     feature_frame["mom_12_1"] = benchmark_ratio.shift(21) / benchmark_ratio.shift(252) - 1
     feature_frame["mom_6_1"] = benchmark_ratio.shift(21) / benchmark_ratio.shift(126) - 1
 
-    # 주목 트리거 이력 (지속창): 트리거 발생 여부·경과일·발생일 신호를 전 기간 벡터로 계산.
-    # evaluate_row가 행 하나만 받아도 "며칠 전에 트리거가 떴는지" 알 수 있고, 백테스트도 그대로 재현된다.
+    # 거래량 신호 이력(관찰기간): 발생 여부·경과일·종류를 전 기간 벡터로 계산.
+    # evaluate_row가 행 하나만 받아도 "며칠 전에 신호가 나왔는지" 알 수 있고, 백테스트도 그대로 재현된다.
     # 조건은 evaluate_row의 당일 판정(유동성+RS+서지/매집)과 동일해야 한다.
     surge_series = (
         (feature_frame["daily_return"] > 0)
@@ -482,7 +482,7 @@ def compute_feature_frame(
         index=feature_frame.index,
     )
     feature_frame["trigger_signal_type"] = trigger_signal.where(trigger_series).ffill().fillna("")
-    # 트리거일 종가 = 신호 원점. 확장도(현재가/트리거가-1) 표시용 — 예측력 없음이 백테스트로
+    # 신호일 종가 = 발생가. 신호 대비 등락률(현재가/발생가-1)은 표시용 — 예측력 없음이 백테스트로
     # 확인됐으므로(IC -0.03, t=-1.3) 판정·점수에 쓰지 말 것. 참조 앵커 전용.
     feature_frame["trigger_price"] = close.where(trigger_series).ffill()
 
@@ -497,7 +497,7 @@ def evaluate_row(
     market_state: str,
     config: ScreenerConfig,
 ) -> dict[str, object]:
-    """피처 행 하나를 받아 필터 판정·등급·트리거가(신호 원점)를 계산한다. row.name은 날짜 인덱스."""
+    """피처 행 하나를 받아 필터 판정·등급·발생가를 계산한다. row.name은 날짜 인덱스."""
     sector_etf = str(meta["sector_etf"])
     liquidity_ok = row["avg_dollar_volume_20d"] >= config.min_dollar_volume
     rs_near_high = bool(row["rs_spy_near_high"])
@@ -522,7 +522,7 @@ def evaluate_row(
         and distribution_days <= config.distribution_days_max
     )
 
-    # 주목 트리거: ① 당일 서지 (거래량 1.5~5배 + 양봉) ② 지속 매집 (10일 내 매집일 6+)
+    # 거래량 신호: ① 당일 서지 (거래량 1.5~5배 + 양봉) ② 지속 매집 (10일 내 매집일 6+)
     daily_return_val = row["daily_return"]
     volume_ratio_val = row["volume_ratio"]
     surge_today = (
@@ -541,8 +541,8 @@ def evaluate_row(
     else:
         signal_type = ""
 
-    # 지속창: 최근 trigger_window_days(당일 포함) 내 트리거 발생 여부.
-    # 트리거 당일이 아니어도 창 내에 있고 오늘 유동성·RS가 유지되면 후보(관찰 종목군)로 남긴다.
+    # 관찰기간: 최근 trigger_window_days(당일 포함) 내 신호 발생 여부.
+    # 신호 당일이 아니어도 기간 내에 있고 오늘 유동성·RS가 유지되면 후보로 남긴다.
     days_since_val = row.get("days_since_trigger", np.nan)
     days_since_trigger = int(days_since_val) if not pd.isna(days_since_val) else None
     in_trigger_window = (
@@ -550,10 +550,10 @@ def evaluate_row(
     )
     triggered_today = bool(row.get("trigger_today", False))
     if in_trigger_window and not signal_type:
-        # 트리거 당일이 아닌 유지 상태 — 창을 연 트리거일의 신호를 표시
+        # 신호 당일이 아닌 유지 상태 — 관찰기간을 연 신호의 종류를 표시
         signal_type = str(row.get("trigger_signal_type", "") or "")
 
-    # 하드 필터: 유동성 + RS+ + 지속창 내 거래량 트리거. MA/과열은 배제하지 않고 등급·경고로 표시
+    # 하드 필터: 유동성 + RS+ + 관찰기간 내 거래량 신호. MA/과열은 배제하지 않고 등급·경고로 표시
     passed = liquidity_ok and rs_positive and in_trigger_window
 
     # 등급 = MA 컨텍스트: A = MA60 위 + MA60 상승, B = 그 외
@@ -578,7 +578,7 @@ def evaluate_row(
 
     current_close = float(row["Close"])
 
-    # 신호 원점(트리거일 종가)과 확장도 — 참조 앵커 전용.
+    # 발생가(신호일 종가)와 신호 대비 등락률 — 참고용.
     # 구 buy_price(MA20/60×1.01 눌림 기준)는 폐기: 백테스트에서 MA 괴리가 클수록 오히려
     # 20d 수익이 좋았고(IC +0.06, t=+1.8) "눌림 대기" 서사를 지지하는 근거가 없었다.
     trigger_price_val = row.get("trigger_price", np.nan)
@@ -892,7 +892,7 @@ def assign_verdicts(
       S5 후보 내 점수 percentile < 40% — 검증상 이 구간의 "진입 검토"는 스킵보다도 나빴음
       W1 어닝스 20일 내 — 이벤트 베팅 분리 (다음 어닝스가 없으면 해당 없음)
       W2 과열 경고 + 당일 저가권 마감(<0.5) — 눌림 대기
-      W3 score_3m < 0.15 — 재트리거/중기 추세 대기
+      W3 score_3m < 0.15 — 신호 재발생/중기 추세 대기
       통과 → 진입 검토
     판정은 백테스트로 검증 가능해야 하므로 여기서만 결정한다. AI는 설명문만 작성.
     """
@@ -930,7 +930,7 @@ def assign_verdicts(
         in_cluster = ticker in clusters
 
         if row["signal_type"] == "acc" and days is not None and days >= 3:
-            verdict, reason = "스킵", f"acc D+{int(days)} 신호 소멸 — 재트리거 전까지 관망"
+            verdict, reason = "스킵", f"acc D+{int(days)} 관찰 종료 — 신호 재발생 전까지 관망"
         elif mismatch and s3m < config.verdict_s2_score3m:
             verdict, reason = "스킵", f"국면({market_state}) 부정합 {row['grade']}등급 + 중기 근거 부족(3M {s3m:.2f})"
         elif in_cluster and ticker not in reps.get(ticker, []):
@@ -944,7 +944,7 @@ def assign_verdicts(
         elif "과열" in warnings and float(row.get("close_position") or 1.0) < 0.5:
             verdict, reason = "대기", "과열 + 당일 저가권 마감 — 단기 소화 후 재평가"
         elif s3m < config.verdict_w3_score3m:
-            verdict, reason = "대기", f"단기 이벤트성(3M {s3m:.2f}) — 재트리거 또는 중기 추세 형성 대기"
+            verdict, reason = "대기", f"단기 이벤트성(3M {s3m:.2f}) — 신호 재발생 또는 중기 추세 형성 대기"
         else:
             parts = []
             if fit_grade and row["grade"] == fit_grade:

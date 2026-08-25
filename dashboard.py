@@ -526,7 +526,7 @@ INDEX_HTML = r"""
     }
     .score-bar span { display: block; height: 100%; background: var(--accent); }
 
-    /* D+ 감쇠 미터 — 5일 관찰창의 남은 일수 (알파는 트리거 직후가 가장 신선) */
+    /* D+ 감쇠 미터 — 5일 관찰기간의 남은 일수 (알파는 신호 직후가 가장 신선) */
     .dp-wrap { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 12px; }
     .dp-meter { display: inline-flex; gap: 2px; }
     .dp-seg { width: 5px; height: 5px; border-radius: 2px; background: #ededeb; }
@@ -2233,8 +2233,8 @@ INDEX_HTML = r"""
       </div>
       <div class="candidate-help">
         <div class="candidate-help-item"><b>목록 사용</b> — 아침 판단은 상단 <b>오늘의 판단</b> 카드에서 끝내고, 여기서는 판정·신규 필터와 정렬로 후보 전체를 교차 확인하세요.</div>
-        <div class="candidate-help-item"><b>D+ 표기</b> — NEW는 오늘 신규 트리거, D+1~4는 관찰 유지 중입니다. 트리거 후 5거래일이 지나거나 RS가 꺾이면 자동 탈락합니다.</div>
-        <div class="candidate-help-item"><b>추격 경고</b> — 기준가 대비 +5% 초과(⚠)는 추격 구간입니다.</div>
+        <div class="candidate-help-item"><b>D+ 표기</b> — NEW는 오늘 신호, D+1~4는 관찰 중입니다. 5거래일이 지나거나 RS가 꺾이면 자동 탈락합니다.</div>
+        <div class="candidate-help-item"><b>신호 대비</b> — 발생가 이후 등락률이며 참고용입니다.</div>
       </div>
       <div class="table-wrap" id="candidateTable"></div>
     </section>
@@ -2265,11 +2265,11 @@ INDEX_HTML = r"""
         <li><strong>프레임</strong> — "거래량 이벤트로 주목 → RS로 우선순위". MA 추세와 과열은 배제 조건이 아니라 등급·경고 라벨로만 표시.</li>
         <li><strong>① 유동성</strong> — 20일 평균 거래대금 ≥ $50M. 저유동성 종목 제외.</li>
         <li><strong>② RS 필수</strong> — 20일 SPY 대비 RS 변화율 &gt; 0. 시장 수익률을 상회하는 종목만.</li>
-        <li><strong>③ 주목 트리거</strong> — 당일 급증(거래량 1.5~5배 + 양봉) OR 지속 매집(10일 중 매집일 6일+). Signal: surge / acc / surge+acc(최강 — 백테스트 20d 초과수익 +4.0%).</li>
+        <li><strong>③ 거래량 신호</strong> — 당일 급증(거래량 1.5~5배 + 양봉) OR 지속 매집(10일 중 매집일 6일+). Signal: surge / acc / surge+acc(최강 — 백테스트 20d 초과수익 +4.0%).</li>
         <li><strong>등급</strong> — A: MA60 위 + MA60 상승(추세 컨텍스트) / B: MA 약세(반등 성격). 배제가 아닌 성격 구분 — 조정장에서는 B가 A보다 우수.</li>
         <li><strong>경고 라벨(배제 아님)</strong> — 과열(MA20×1.25 초과 등) / 거래량5x+(어닝스 갭 의심) / 분산N일(매도 압력).</li>
         <li><strong>점수 v3</strong> — <span data-score-weights>SPY RS 50D 25% + SPY RS 20D 20% + 상승/하락일 거래량비 20D 20% + 섹터 RS 20D 15% + 섹터 RS 50D 10% + RS선 고점 근접 10%</span> percentile 가중합 + 국면-등급 정합 보너스(+<span data-regime-bonus>0.10</span>: 상승장→A, 조정장→B).</li>
-        <li><strong>매수기준가</strong> — 종가가 MA20 위면 MA20×1.01, 아니면 MA60×1.01. 눌림목 진입 기준선.</li>
+        <li><strong>발생가</strong> — 가장 최근 거래량 신호일 종가. 현재가와의 차이는 참고용이며 판정에는 쓰지 않음.</li>
         <li><strong>시장 국면 (3축 종합)</strong> — ① <b>추세</b>: SPY·QQQ의 MA60 히스테리시스(-1% 밑 2일 연속이면 이탈, +1% 위면 복귀 — 경계 왕복 방지) ② <b>시장 폭</b>: 유니버스 중 MA60 위 종목 비율 — 하한 감지기(40% 미만이면 약세 투표, 그 외 중립). 개별주 셋업이 먹히는 장인지 판별: 후보 성과가 폭 40% 밑에서만 붕괴(-3.2%)하고 그 위에선 폭과 무관 ③ <b>VIX 기간구조</b>: VIX÷VIX3M(0.95 미만 콘탱고 = 옵션시장 평온, 1.0 초과 백워데이션 = 즉각적 공포). 합산 후 새 국면이 3일 유지될 때만 전환(연 전환 27→14회). 후보 제거 없이 등급 보너스·판정에만 사용.</li>
       </ul>
     </details>
@@ -2396,8 +2396,8 @@ INDEX_HTML = r"""
       ["score",                  "Score",        "scorebar"],
       ["score_3m",               "3M",           "decimal"],
       ["close",                  "Price",        "price"],
-      ["trigger_price",          "트리거가",     "money"],
-      ["ext_from_trigger",       "원점 대비",    "pctdist"],
+      ["trigger_price",          "발생가",       "money"],
+      ["ext_from_trigger",       "신호 대비",    "pctdist"],
       ["volume_ratio",           "Vol ×",        "decimal"],
       ["warnings",               "주의",         "warntext"],
     ];
@@ -2737,7 +2737,7 @@ INDEX_HTML = r"""
       "Evaluated":       "데이터 충분한 종목",
       "Liquidity":       "20일 평균 거래대금 ≥ $50M",
       "RS 20D > 0":      "20일 SPY 대비 RS 양수 — 시장 수익률 상회",
-      "Volume Trigger (5일 창)":  "최근 5거래일 내 트리거(급증 1.5~5배+양봉 OR 매집 10일 중 6일+) — 트리거 후 5일간 관찰군 유지",
+      "거래량 신호 (5일)": "최근 5거래일 내 신호(급증 1.5~5배+양봉 OR 매집 10일 중 6일+) — 5일간 관찰",
       "구성: A등급 (참고)": "후보 중 MA60 위 + MA60 상승(추세형 A)의 비중 — 필터 단계가 아니라 구성 통계. B(반등형)는 탈락이 아니며 조정장에서는 B가 우수",
     };
 
@@ -2766,10 +2766,10 @@ INDEX_HTML = r"""
       const cfg = data.config || {};
       const weightChip = scoreWeightText(cfg) || "가중치: 서버 설정 로드 대기";
       const params = [
-        `트리거: 당일 급증(거래량 ${cfg.surge_ratio_min ?? 1.5}~${cfg.surge_ratio_max ?? 5}배+양봉) OR 매집 ${cfg.accumulation_trigger_days ?? 6}일+/10일`,
+        `신호: 당일 급증(거래량 ${cfg.surge_ratio_min ?? 1.5}~${cfg.surge_ratio_max ?? 5}배+양봉) OR 매집 ${cfg.accumulation_trigger_days ?? 6}일+/10일`,
         `필수: RS 20D > 0 · 유동성 통과 / 등급: A=MA60 위+상승, B=MA 약세`,
         `점수 v3: ${weightChip}`,
-        `지속창: 트리거 후 5거래일 유지 (D+ 컬럼) / 3M 점수: 12-1 모멘텀 기반 (참고용)`,
+        `관찰기간: 신호 후 5거래일 (D+ 컬럼) / 3M 점수: 12-1 모멘텀 기반 (참고용)`,
       ].map(t => `<span class="chip">${escapeHtml(t)}</span>`).join("");
 
       filterFunnel.innerHTML = stepsHtml +
@@ -2783,17 +2783,16 @@ INDEX_HTML = r"""
       "ticker":                 "종목 티커. 클릭 또는 Enter로 차트 팝업",
       "name":                   "종목명",
       "sector":                 "GICS 섹터",
-      "signal_type":            "주목 트리거 종류\n급증(unusual volume): 당일 거래량 1.5~5배 + 양봉\n매집(accumulation): 최근 10일 중 매집일 6일 이상\n급증+매집: 둘 다 충족 — 백테스트상 가장 강한 신호",
-      "days_since_trigger":     "트리거 발생 후 경과 거래일 (NEW = 오늘 신규)\n점은 5일 관찰창의 남은 일수 — 알파는 트리거 직후가 가장 신선\n5거래일이 지나면 관찰군에서 자동 소멸",
+      "signal_type":            "거래량 신호 종류\n급증(unusual volume): 당일 거래량 1.5~5배 + 양봉\n매집(accumulation): 최근 10일 중 매집일 6일 이상\n급증+매집: 둘 다 충족 — 백테스트상 가장 강한 신호",
+      "days_since_trigger":     "신호 후 경과 거래일 (NEW = 오늘)\n점은 5일 관찰기간의 남은 일수 — 신호 직후가 가장 신선\n5거래일이 지나면 관찰 종료",
       "verdict":                "코드 규칙이 결정론적으로 산출한 판정 (AI 아님)\n진입 검토: 규칙 통과 / 대기: 조건 충족 대기 / 스킵: 오늘은 제외\n사유는 상단 '오늘의 판단' 카드·행에 표시",
       "grade":                  "MA 컨텍스트 등급\nA: MA60 위 + MA60 상승 (추세 속 신호)\nB: MA 약세 (반등 성격 — 조정장에서는 B가 우수)",
       "score":                  "점수 v3 — RS 중심 percentile 가중합 (가중치는 서버 설정에서 로드)",
       "score_3m":               "3개월(60일) 관점 느린 모멘텀 점수 (실험적)\n12-1 모멘텀 60% + 6-1 모멘텀 40% percentile\n생존 편향에 가장 민감한 지표 — 상대 순위 전용",
       "close":                  "최근 종가",
-      "trigger_price":          "트리거가 — 거래량 트리거가 발생한 날의 종가 (신호 원점)",
-      "ext_from_trigger":       "원점 대비 확장도 = 현재가/트리거가 - 1\n신호 발생 시점 대비 얼마나 움직였는지 (참조용 — 예측력 없음이 백테스트로 확인됨)",
-      "_buy_delta":             "현재가 ÷ 매수기준가 - 1\n+5% 초과 = 기준선 위로 추격 구간 (⚠)\n음수 = 아직 기준선 아래 (지지 미확인)",
-      "volume_ratio":           "당일 거래량 ÷ 20일 평균 거래량\n1.5~5배 + 양봉이면 급증 트리거 충족",
+      "trigger_price":          "발생가 — 가장 최근 거래량 신호일 종가",
+      "ext_from_trigger":       "신호 대비 = 현재가/발생가 - 1\n신호 이후 등락률 (참고용 — 예측력 없음이 백테스트로 확인됨)",
+      "volume_ratio":           "당일 거래량 ÷ 20일 평균 거래량\n1.5~5배 + 양봉이면 급증 신호 충족",
       "warnings":               "경고 라벨 (배제 아님)\n과열: 단기 급등 구간 — 고수익·고위험, 포지션 크기로 관리\n거래량5x+: 어닝스 갭 의심 — 추격 주의\n분산N일: 최근 10일 내 분산일 다수 — 매도 압력",
     };
 
@@ -2874,6 +2873,17 @@ INDEX_HTML = r"""
       return `${v >= 0 ? "+" : ""}${pct}%${v > 0.05 ? " ⚠" : ""}`;
     }
 
+    // 저장된 과거 코멘터리도 현재 화면 용어에 맞춰 표시한다.
+    function displayCopy(value) {
+      return String(value ?? "")
+        .replaceAll("재트리거 발생", "신호 재발생")
+        .replaceAll("재트리거", "신호 재발생")
+        .replaceAll("신호 원점", "발생가")
+        .replaceAll("원점", "발생가")
+        .replaceAll("지속창", "관찰기간")
+        .replaceAll("신호 소멸", "관찰 종료");
+    }
+
     function entryPills(r) {
       const pills = [];
       if (r.days_since_trigger === 0 || r._diff === "new") pills.push(`<span class="ec-pill new">NEW</span>`);
@@ -2893,7 +2903,7 @@ INDEX_HTML = r"""
       const note = comments[r.ticker] || "";
       const noteHtml = note
         ? `<div class="ec-note">${escapeHtml(note)}</div>`
-        : (r.verdict_reason ? `<div class="ec-note fallback">${escapeHtml(r.verdict_reason)}</div>` : "");
+        : (r.verdict_reason ? `<div class="ec-note fallback">${escapeHtml(displayCopy(r.verdict_reason))}</div>` : "");
       const fmt = (v, type) => v === null || v === undefined ? "–" : formatValue(v, type);
       return `
         <article class="entry-card">
@@ -2914,21 +2924,21 @@ INDEX_HTML = r"""
           </div>
           <div class="ec-nums">
             <div class="ec-num"><span>현재가</span><strong>${escapeHtml(fmt(r.close, "price"))}</strong></div>
-            <div class="ec-num"><span>트리거가</span><strong>${escapeHtml(fmt(r.trigger_price, "money"))}</strong></div>
-            <div class="ec-num"><span>원점 대비</span><strong class="${deltaClass(r.ext_from_trigger)}">${escapeHtml(deltaText(r.ext_from_trigger))}</strong></div>
+            <div class="ec-num"><span>발생가</span><strong>${escapeHtml(fmt(r.trigger_price, "money"))}</strong></div>
+            <div class="ec-num"><span>신호 대비</span><strong class="${deltaClass(r.ext_from_trigger)}">${escapeHtml(deltaText(r.ext_from_trigger))}</strong></div>
           </div>
           ${noteHtml}
         </article>`;
     }
 
     function waitRowHtml(r, comments) {
-      const reason = comments[r.ticker] || r.verdict_reason || "";
+      const reason = comments[r.ticker] || displayCopy(r.verdict_reason);
       const dplus = r.days_since_trigger === 0 ? "NEW" :
         (r.days_since_trigger !== null && r.days_since_trigger !== undefined ? `D+${r.days_since_trigger}` : "");
       const fmt = (v, type) => v === null || v === undefined ? "–" : formatValue(v, type);
       const nums = [
         dplus,
-        `${fmt(r.close, "price")} / 트리거가 ${fmt(r.trigger_price, "money")} (${deltaText(r.ext_from_trigger)})`,
+        `${fmt(r.close, "price")} / 발생가 ${fmt(r.trigger_price, "money")} (${deltaText(r.ext_from_trigger)})`,
       ].filter(Boolean).join(" · ");
       return `
         <div class="wait-row">
@@ -2950,14 +2960,14 @@ INDEX_HTML = r"""
       if (!cands.length) { section.style.display = "none"; return; }
 
       const comments = {};
-      (c?.items || []).forEach(it => { comments[it.ticker] = it.comment; });
+      (c?.items || []).forEach(it => { comments[it.ticker] = displayCopy(it.comment); });
 
       // AI 시장 코멘트는 시장 배너에 흡수
       const aiEl = document.getElementById("marketBannerAI");
       if (aiEl) {
         if (c?.market_comment) {
           // 개조식 브리핑: "라벨: 내용" 줄 → 라벨 열 + 본문 열의 행으로 렌더링
-          const rows = escapeHtml(c.market_comment).split("\n")
+          const rows = escapeHtml(displayCopy(c.market_comment)).split("\n")
             .map(l => l.trim()).filter(Boolean)
             .map(l => {
               const m = l.match(/^([가-힣A-Za-z ]{1,10}):\s*(.*)$/);
@@ -3003,7 +3013,7 @@ INDEX_HTML = r"""
             <div class="skip-rows">${skips.map(r => `
               <div class="skip-row">
                 <span class="ticker-link sr-ticker" data-ticker="${escapeHtml(r.ticker)}" data-name="${escapeHtml(r.name || "")}">${escapeHtml(r.ticker)}</span>
-                <span class="sr-reason">${escapeHtml(r.verdict_reason || "")}</span>
+                <span class="sr-reason">${escapeHtml(displayCopy(r.verdict_reason))}</span>
               </div>`).join("")}</div>
           </details>`;
       }
@@ -3043,14 +3053,14 @@ INDEX_HTML = r"""
         if (row.warnings) pills.push(`<span class="mcc-pill warn">⚠ ${escapeHtml(row.warnings)}</span>`);
         // 판정 사유 인라인 — 모바일에는 title 툴팁이 없으므로 카드에 직접 노출
         const reasonLine = row.verdict && row.verdict_reason
-          ? `<div style="margin-top:7px;font-size:11px;line-height:1.5;color:var(--muted)">${escapeHtml(row.verdict_reason)}</div>`
+          ? `<div style="margin-top:7px;font-size:11px;line-height:1.5;color:var(--muted)">${escapeHtml(displayCopy(row.verdict_reason))}</div>`
           : "";
 
         const metrics = [
           ["3M", value("score_3m", "decimal")],
           ["현재가", value("close", "price")],
-          ["트리거가", value("trigger_price", "money")],
-          ["원점 대비", deltaText(row.ext_from_trigger)],
+          ["발생가", value("trigger_price", "money")],
+          ["신호 대비", deltaText(row.ext_from_trigger)],
           ["RS 20D", value("rs_spy_20d", "pct")],
           ["거래량", volumeRatio],
         ].map(([label, metricValue]) => `
@@ -3084,7 +3094,7 @@ INDEX_HTML = r"""
       if (!rows || rows.length === 0) {
         candidateTable.innerHTML = allCandidates.length
           ? '<div class="empty">현재 필터 조건에 맞는 후보가 없습니다 — 판정·등급·섹터 필터를 넓혀 보세요.</div>'
-          : '<div class="empty">오늘 후보 없음 — 세 관문(유동성 · RS+ · 거래량 트리거)을 통과한 종목이 없습니다.</div>';
+          : '<div class="empty">오늘 후보 없음 — 세 관문(유동성 · RS+ · 거래량 신호)을 통과한 종목이 없습니다.</div>';
         return;
       }
       const head = columns.map(([key, label, type]) => {
@@ -3120,7 +3130,7 @@ INDEX_HTML = r"""
             if (v === 0) return `<td class="center"><span style="font-size:10px;padding:2px 6px;border-radius:999px;background:var(--accent);color:#fff;font-weight:700">NEW</span></td>`;
             const remaining = Math.max(0, 5 - v);
             const segs = Array.from({ length: 5 }, (_, i) => `<span class="dp-seg${i < remaining ? " on" : ""}"></span>`).join("");
-            return `<td class="center" title="트리거 후 ${v}거래일 경과 — 관찰창 ${remaining}일 남음 (5일 지나면 자동 소멸, 알파는 트리거 직후가 가장 신선)"><span class="dp-wrap">D+${v}<span class="dp-meter">${segs}</span></span></td>`;
+            return `<td class="center" title="신호 후 ${v}거래일 — 관찰기간 ${remaining}일 남음"><span class="dp-wrap">D+${v}<span class="dp-meter">${segs}</span></span></td>`;
           }
           if (type === "scorebar") {
             const v = row[key];
@@ -3133,7 +3143,7 @@ INDEX_HTML = r"""
             const v = row[key] || "";
             const st = VERDICT_COLORS[v];
             if (!st) return `<td></td>`;
-            return `<td title="${escapeHtml(row.verdict_reason || "")}"><span style="font-size:10px;padding:2px 7px;border-radius:999px;white-space:nowrap;background:${st};color:#fff">${escapeHtml(v)}</span></td>`;
+            return `<td title="${escapeHtml(displayCopy(row.verdict_reason))}"><span style="font-size:10px;padding:2px 7px;border-radius:999px;white-space:nowrap;background:${st};color:#fff">${escapeHtml(v)}</span></td>`;
           }
           if (type === "pctdist") {
             const v = row[key];
@@ -3271,8 +3281,8 @@ INDEX_HTML = r"""
       set("hmUniverse", data.universe_count != null ? Number(data.universe_count).toLocaleString() : null);
       set("hmGate1", byLabel["Liquidity"] != null ? `통과 ${byLabel["Liquidity"]}` : null);
       set("hmGate2", byLabel["RS 20D > 0"] != null ? `통과 ${byLabel["RS 20D > 0"]}` : null);
-      // 서버 라벨은 "Volume Trigger (5일 창)" — 접두사 매칭으로 라벨 표기 변경에 견디게
-      const triggerStep = (data.filter_steps || []).find(s => String(s.label).startsWith("Volume Trigger"));
+      // 이전 영문 라벨도 읽되 화면에는 "거래량 신호"로 표시한다.
+      const triggerStep = (data.filter_steps || []).find(s => /^(거래량 신호|Volume Trigger)/.test(String(s.label)));
       set("hmGate3", triggerStep ? `통과 ${triggerStep.count}` : null);
       set("hmCands", data.candidates_count);
       if (data.date) set("hmCandsDate", `오늘의 후보 (${data.date} 기준)`);
@@ -3299,7 +3309,7 @@ INDEX_HTML = r"""
         .sort((a, b) => (b.score ?? -1) - (a.score ?? -1))
         .forEach((r, i) => { r._rank = i + 1; });
       window.__scoreMax = Math.max(...allCandidates.map(r => r.score ?? 0), 0) || 1;
-      // 트리거가 대비 확장도 — CSV에 없으면(구 파일) 프론트에서 파생
+    // 신호 대비 등락률 — CSV에 없으면(구 파일) 프론트에서 파생
       allCandidates.forEach(r => {
         if (r.ext_from_trigger == null && r.close != null && r.trigger_price != null && r.trigger_price > 0) {
           r.ext_from_trigger = r.close / r.trigger_price - 1;
@@ -3340,7 +3350,7 @@ INDEX_HTML = r"""
       "rs_positive":             (m) => `최근 20일간 SPY 대비 상대강도(RS)가 마이너스 — 시장 전체보다 약합니다. RS+는 필수 조건입니다.`,
       "surge_today":             (m) => `당일 거래량 급증 없음 — 20일 평균 대비 1.5~5배 + 양봉 조건 미충족 (지속 매집 충족 시에는 통과 가능).`,
       "sustained_accumulation":  (m) => `지속 매집 미충족 — 최근 10일 중 매집일(가격↑+거래량↑)이 6일 미만 (당일 급증 충족 시에는 통과 가능).`,
-      "passed_hard_filters":     (m) => `유동성 · RS+ · 거래량 트리거(당일 급증 OR 지속 매집) 중 하나 이상 미충족 — 후보군에 포함되지 않았습니다.`,
+      "passed_hard_filters":     (m) => `유동성 · RS+ · 거래량 신호(당일 급증 OR 지속 매집) 중 하나 이상 미충족 — 후보군에 포함되지 않았습니다.`,
       "above_ma60":              (m) => `주가가 MA60 아래 — 배제 사유는 아니지만 B등급(MA 약세, 반등 성격)으로 분류됩니다.`,
       "ma60_rising":             (m) => `MA60이 10일 전보다 낮음 — 배제 사유는 아니지만 B등급(MA 약세)으로 분류됩니다.`,
       "not_overheated":          (m) => `과열 구간 — MA20 대비 125% 초과, 5일 40%+, 또는 당일 25%+ 급등. 배제하지 않지만 ⚠과열 라벨이 붙습니다 (고수익·고위험 구간, 포지션 크기로 관리).`,
@@ -3510,7 +3520,7 @@ INDEX_HTML = r"""
     chartOverlay.addEventListener("click", e => { if (e.target === chartOverlay) closeChartModal(); });
     document.addEventListener("keydown", e => { if (e.key === "Escape") closeChartModal(); });
 
-    // 가격 라인 + 거래량 바(하단 밴드) + 매수기준가 점선 + 트리거일 마커를 한 SVG에 렌더.
+    // 가격 라인 + 거래량 바(하단 밴드) + 발생가 점선 + 신호일 마커를 한 SVG에 렌더.
     // 거래량 스크리너의 근거(급증·매집)를 차트에서 직접 검증할 수 있게 한다. 색은 기존 토큰만 사용.
     function drawPriceChart(wrapEl, data, small) {
       const dates = data.dates || [];
@@ -3570,22 +3580,22 @@ INDEX_HTML = r"""
         }).join("");
       }
 
-      // 매수기준가 점선 — 눌림목 진입 기준선 (범위 밖이면 생략)
+      // 발생가 점선 — 가장 최근 거래량 신호일 종가 (범위 밖이면 생략)
       let buySvg = "";
       if (showBuy) {
         const by = y(buyPrice).toFixed(1);
         const label = small ? "" :
-          `<text x="${pad.left + 3}" y="${by}" text-anchor="start" dominant-baseline="text-after-edge" fill="var(--muted)" font-size="${fs}" font-family="DM Mono,monospace">트리거 ${fmtP(buyPrice)}</text>`;
+          `<text x="${pad.left + 3}" y="${by}" text-anchor="start" dominant-baseline="text-after-edge" fill="var(--muted)" font-size="${fs}" font-family="DM Mono,monospace">발생가 ${fmtP(buyPrice)}</text>`;
         buySvg = `<line x1="${pad.left}" y1="${by}" x2="${pad.left + iW}" y2="${by}" stroke="var(--muted)" stroke-width="1" stroke-dasharray="4 3"/>${label}`;
       }
 
-      // 트리거일 마커 — 마지막 거래일에서 days_since_trigger만큼 거슬러 올라간 지점
+      // 신호일 마커 — 마지막 거래일에서 days_since_trigger만큼 거슬러 올라간 지점
       let trigSvg = "";
       const dst = typeof data.days_since_trigger === "number" ? Math.round(data.days_since_trigger) : null;
       if (dst !== null && dst >= 0) {
         const idx = prices.length - 1 - dst;
         if (idx >= 0) {
-          trigSvg = `<circle cx="${x(idx).toFixed(1)}" cy="${y(prices[idx]).toFixed(1)}" r="${small ? 2.6 : 3.5}" fill="${lineColor}" stroke="#fff" stroke-width="1.5"><title>거래량 트리거 발생일 (D+${dst})</title></circle>`;
+          trigSvg = `<circle cx="${x(idx).toFixed(1)}" cy="${y(prices[idx]).toFixed(1)}" r="${small ? 2.6 : 3.5}" fill="${lineColor}" stroke="#fff" stroke-width="1.5"><title>거래량 신호일 (D+${dst})</title></circle>`;
         }
       }
 
@@ -3894,7 +3904,7 @@ def filter_steps(results: pd.DataFrame, universe_count: int) -> list[dict[str, o
         ("Liquidity",       bool_filter("liquidity_ok")),
         ("RS 20D > 0",      bool_filter("rs_positive", results["rs_spy_20d"] > 0)),
         (
-            "Volume Trigger (5일 창)",
+            "거래량 신호 (5일)",
             (results["days_since_trigger"].notna() & (results["days_since_trigger"] <= 4))
             if "days_since_trigger" in results.columns
             else bool_filter("surge_today") | bool_filter("sustained_accumulation"),
@@ -4099,7 +4109,7 @@ def _stored_prices(symbol: str) -> pd.DataFrame | None:
     return read_symbol(symbol, PROJECT_ROOT / DEFAULT_STORE_DIR)
 
 
-# 차트 오버레이(매수기준가·트리거 경과일) — 최신 유니버스 CSV를 mtime 기준으로 캐시
+# 차트 오버레이(발생가·신호 경과일) — 최신 유니버스 CSV를 mtime 기준으로 캐시
 _overlay_cache: dict[str, object] = {"key": None, "data": {}}
 
 
