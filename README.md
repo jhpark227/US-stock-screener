@@ -21,7 +21,7 @@ UV_CACHE_DIR=/tmp/uv-cache uv run python scripts/fetch_universe.py
 UV_CACHE_DIR=/tmp/uv-cache uv run python main.py
 ```
 
-당일 캐시가 없으면 약 2분, 캐시 적중 시 약 4초 소요됩니다.
+가격 데이터는 증분 동기화라 평소 ~10초, 당일 재실행 시 ~4초 소요됩니다(저장소가 비어 있으면 최초 전체 다운로드 ~2분).
 결과는 아래 경로에 저장됩니다.
 
 ```
@@ -132,8 +132,8 @@ MA 조건은 배제가 아니라 성격 구분입니다. 하락 국면에서는 
 `launchd/` 에 실행 래퍼 스크립트가 있습니다 (macOS launchd 또는 cron에 연결).
 
 ```
-launchd/run_screener.sh          # main.py 실행 → launchd/screener.log
-launchd/run_fetch_universe.sh    # 유니버스 갱신 → launchd/fetch_universe.log
+launchd/run_screener.sh          # 스크리너 → AI 코멘터리 → 정적 사이트 빌드·푸시 (실패 시 30분 후 1회 재시도) → launchd/screener.log
+launchd/run_fetch_universe.sh    # 유니버스 갱신 (월 1회) → launchd/fetch_universe.log
 ```
 
 crontab으로 쓸 경우 (한국 시간 기준 평일 새벽 6시, 미국 장 마감 후):
@@ -144,12 +144,21 @@ crontab으로 쓸 경우 (한국 시간 기준 평일 새벽 6시, 미국 장 �
 
 대시보드의 "마지막 실행" 표시는 `launchd/screener.log` 를 읽습니다.
 
-## 캐시
+## 정적 배포 (Cloudflare Pages)
 
-당일 날짜 기준 pickle 캐시 (`.cache/yfinance/prices/<period>/<날짜>/<SYMBOL>.pkl`). 날짜가 바뀌면 자동 재다운로드하며, 강제 무효화가 필요하면 `.cache/yfinance/prices/` 를 삭제합니다.
+`scripts/build_site.py` 가 최신 결과를 서버 없이 동작하는 정적 미러로 변환해 `site/` 에 저장합니다 — 패치된 index.html(API 호출을 미리 구운 JSON으로 라우팅, 스크리너 실행 버튼 숨김) + `api/*.json` 번들 + 결과 CSV. 일일 자동화가 이 디렉터리를 커밋·푸시하면 깃헙에 연결된 Cloudflare Pages가 자동 재배포합니다(빌드 커맨드 없음, output directory `site`). 접근 제한은 Cloudflare Access(이메일 OTP)로 겁니다. 배포본은 읽기 전용 스냅샷이며 스크리너 실행은 로컬에서만 가능합니다.
+
+## 가격 저장소
+
+심볼당 parquet 1개를 유지하는 증분 저장소 (`price_store.py`, `.cache/price_store/daily/<SYMBOL>.parquet`, 최대 800거래일).
+
+- 매일 마지막 저장일 이후만 다운로드하고, 앞 7일을 겹쳐 받아 저장분과 종가를 대조 — 어긋나면(배당·분할로 수정주가 재계산) 해당 종목만 자동 전체 리프레시. 별도의 주기적 전체 재다운로드가 필요 없습니다.
+- 다운로드 실패는 배치 재시도(지수 백오프) → 종목 단위 재시도 → 그래도 실패하면 전일 저장분으로 대체하고 대시보드에 표시합니다.
+- 강제 무효화가 필요하면 `.cache/price_store/` 삭제 후 재실행(전체 재다운로드 ~2분). 수동 동기화는 `uv run python scripts/update_prices.py` (`--full` 로 전체 리프레시).
 
 ## 기술 스택
 
 - Python 3.12+, [uv](https://github.com/astral-sh/uv) 패키지 관리 (`pip install` 대신 `uv add`)
-- yfinance (가격 데이터), pandas, numpy
+- yfinance (가격 데이터), pandas, numpy, pyarrow (parquet 저장소)
 - 대시보드: 표준 라이브러리 `ThreadingHTTPServer` — HTML/CSS/JS 전체가 `dashboard.py`의 `INDEX_HTML` 문자열에 인라인 (외부 프레임워크·템플릿 파일 없음)
+- 배포: Cloudflare Pages (정적 미러, `site/`) + Cloudflare Access
