@@ -2311,6 +2311,7 @@
     const refreshButton    = document.getElementById("refreshButton");
     const runButton        = document.getElementById("runButton");
     runButton.style.display = "none";  // 정적 미러 — 서버 없음
+    refreshButton.style.display = "none";  // 정적 미러 — 데이터가 빌드 시점에 고정, F5로 충분
     const statusText = document.getElementById("statusText");
     const runMeta = document.getElementById("runMeta");
     const universeLine = document.getElementById("universeLine");

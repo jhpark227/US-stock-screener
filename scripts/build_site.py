@@ -92,6 +92,7 @@ RUNBUTTON_ANCHOR = 'const runButton        = document.getElementById("runButton"
 RUNBUTTON_STATIC = (
     RUNBUTTON_ANCHOR
     + '\n    runButton.style.display = "none";  // 정적 미러 — 서버 없음'
+    + '\n    refreshButton.style.display = "none";  // 정적 미러 — 데이터가 빌드 시점에 고정, F5로 충분'
 )
 
 
