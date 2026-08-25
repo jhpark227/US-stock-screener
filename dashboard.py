@@ -4132,7 +4132,11 @@ def ticker_lookup(symbol: str) -> dict[str, object]:
     if sym_row.empty:
         return {"symbol": symbol, "in_universe": True, "name": name, "sector": sector, "has_screener_result": False}
 
-    r = sym_row.iloc[0]
+    return screener_row_payload(symbol, name, sector, sym_row.iloc[0])
+
+
+def screener_row_payload(symbol: str, name: str, sector: str, r: pd.Series) -> dict[str, object]:
+    """스크리너 결과 행 하나 → /api/ticker 응답 payload (정적 사이트 빌더가 재사용)."""
 
     def safe(col: str) -> object:
         v = r.get(col)
@@ -4162,6 +4166,8 @@ def ticker_lookup(symbol: str) -> dict[str, object]:
     }
 
     grade = str(r.get("grade") or "")
+    if grade.lower() == "nan":
+        grade = ""
     metrics = {
         "close":                 safe("close"),
         "rs_spy_20d":            safe("rs_spy_20d"),

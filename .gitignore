@@ -11,7 +11,7 @@ wheels/
 
 # Local runtime caches and generated screener output
 .cache/
-outputs/
+/outputs/
 launchd/*.log
 
 # macOS
