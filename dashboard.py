@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import pickle
 import traceback
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -13,7 +12,8 @@ from urllib.parse import parse_qs, unquote, urlparse
 import numpy as np
 import pandas as pd
 
-from main import DEFAULT_OUTPUT_DIR, DEFAULT_TICKER_FILE, DEFAULT_YFINANCE_CACHE_DIR, ScreenerConfig, _symbol_cache_dir, load_universe, run_screener
+from main import DEFAULT_OUTPUT_DIR, DEFAULT_TICKER_FILE, SCORE_WEIGHTS_V3, ScreenerConfig, load_universe, run_screener
+from price_store import DEFAULT_STORE_DIR, read_symbol
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -28,6 +28,7 @@ INDEX_HTML = r"""
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>APEX — Alpha Pulse Equity eXplorer</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%2318745a'/><polyline points='5 22 11 22 13 17 16 25 19 10 22 15 27 9' fill='none' stroke='white' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,700;1,9..40,400&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -91,19 +92,6 @@ INDEX_HTML = r"""
 
     .subtle { color: var(--muted); }
 
-    .controls {
-      display: grid;
-      grid-template-columns: minmax(180px, 240px) auto;
-      gap: 10px;
-      align-items: end;
-      background: var(--surface);
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      box-shadow: var(--shadow);
-      padding: 14px;
-      margin-bottom: 16px;
-    }
-
     label {
       display: grid;
       gap: 6px;
@@ -162,26 +150,6 @@ INDEX_HTML = r"""
     }
 
     .panel h2 { margin: 0 0 12px; font-size: 15px; }
-
-    .metrics {
-      display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
-      gap: 10px;
-      margin-bottom: 16px;
-    }
-
-    .metric {
-      min-height: 96px;
-      background: var(--surface);
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      box-shadow: var(--shadow);
-      padding: 16px 14px;
-    }
-
-    .metric .label { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
-    .metric .value { font-size: 24px; font-weight: 700; line-height: 1.1; font-family: 'DM Mono', monospace; }
-    .metric .note { color: var(--muted); margin-top: 7px; font-size: 12px; }
 
     .funnel { display: grid; gap: 9px; }
 
@@ -384,6 +352,48 @@ INDEX_HTML = r"""
       color: #fff;
     }
 
+    /* 판정 세그먼트 (grade-group과 동일 계열) */
+    .verdict-group {
+      display: flex;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+    .vd-btn {
+      min-height: 30px;
+      padding: 4px 12px;
+      border: none;
+      border-radius: 0;
+      background: #fff;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      border-right: 1px solid var(--line);
+      white-space: nowrap;
+    }
+    .vd-btn:last-child { border-right: none; }
+    .vd-btn.active { background: var(--accent); color: #fff; }
+    .vd-btn:not(.active):hover { background: #f0f0ec; }
+
+    .toggle-btn {
+      min-height: 30px;
+      padding: 4px 12px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .toggle-btn[aria-pressed="true"] {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+      color: #0e5b45;
+    }
+
     .sector-select {
       min-height: 30px;
       padding: 4px 8px;
@@ -415,6 +425,25 @@ INDEX_HTML = r"""
       background-attachment: local, local, scroll, scroll;
     }
 
+    .mobile-candidate-list { display: none; }
+
+    .mobile-sort {
+      display: none;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+    }
+
+    .mobile-sort label {
+      display: block;
+      white-space: nowrap;
+    }
+
+    .mobile-sort select {
+      min-height: 38px;
+      flex: 1;
+    }
+
     table {
       width: 100%;
       min-width: 1040px;
@@ -423,7 +452,7 @@ INDEX_HTML = r"""
     }
 
     th, td {
-      padding: 10px 11px;
+      padding: 10px 9px;
       border-bottom: 1px solid var(--line);
       text-align: left;
       vertical-align: middle;
@@ -457,9 +486,30 @@ INDEX_HTML = r"""
     tr:last-child td { border-bottom: 0; }
 
     tbody tr:hover { background: #f6f9f7; }
-    tfoot tr { border-top: 2px solid var(--border); background: #f6f9f7; }
+    tfoot tr { border-top: 2px solid var(--line); background: #f6f9f7; }
 
     .num { text-align: right; font-variant-numeric: tabular-nums; font-family: 'DM Mono', monospace; font-size: 13px; }
+
+    /* Name 컬럼(4번째)은 말줄임 — 긴 종목명이 결정 컬럼들을 밀어내지 않게 */
+    #candidateTable td:nth-child(4) {
+      max-width: 200px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* Score 인셀 마이크로바 — 당일 최고 점수 대비 상대 크기 */
+    .score-cell { white-space: nowrap; }
+    .score-bar {
+      display: inline-block; width: 36px; height: 5px; border-radius: 999px;
+      background: #ededeb; overflow: hidden; vertical-align: middle; margin-right: 6px;
+    }
+    .score-bar span { display: block; height: 100%; background: var(--accent); }
+
+    /* D+ 감쇠 미터 — 5일 관찰창의 남은 일수 (알파는 트리거 직후가 가장 신선) */
+    .dp-wrap { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 12px; }
+    .dp-meter { display: inline-flex; gap: 2px; }
+    .dp-seg { width: 5px; height: 5px; border-radius: 2px; background: #ededeb; }
+    .dp-seg.on { background: var(--accent); opacity: 0.75; }
     .center { text-align: center; font-size: 12px; }
     .rank { text-align: right; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; font-family: 'DM Mono', monospace; width: 32px; }
     .ticker { font-weight: 700; font-family: 'DM Mono', monospace; letter-spacing: 0.02em; }
@@ -473,25 +523,261 @@ INDEX_HTML = r"""
     .db-up   { background: #dcebe5; color: var(--accent); }
     .db-down { background: #fef0dc; color: var(--warn); }
 
-    /* diff summary section */
-    .diff-section {
+    /* diff chips (상단 diff-top에서 사용) */
+    .diff-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+    /* 라벨-값 스타일 (리포트 문법): 무배경 사각 칩, 색은 값 숫자에만 */
+    .diff-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 4px; font-size: 12px; font-weight: 500; border: 1px solid var(--line); background: none; color: var(--muted); }
+    .diff-chip .count { font-weight: 700; font-family: 'DM Mono', monospace; }
+    .diff-chip.new-in .count     { color: var(--accent); }
+    .diff-chip.dropped .count    { color: var(--danger); }
+    .diff-chip.upgraded .count   { color: var(--accent); }
+    .diff-chip.downgraded .count { color: var(--warn); }
+    .diff-tickers { font-size: 12px; color: var(--muted); line-height: 1.8; }
+    .diff-tickers strong { color: var(--text); font-family: 'DM Mono', monospace; font-size: 11px; }
+
+    /* 전일 대비 diff — 상단 슬림 스트립 (아침의 첫 질문 "뭐가 바뀌었나"를 최상단에) */
+    .diff-top {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin: -6px 0 14px;
+    }
+    .diff-top .dt-label { font-size: 12px; color: var(--muted); white-space: nowrap; }
+    .diff-top .diff-chips { margin-bottom: 0; }
+    .diff-top .dt-details { font-size: 12px; }
+    .diff-top .dt-details summary {
+      cursor: pointer; color: var(--accent); font-weight: 600;
+      list-style: none; user-select: none;
+    }
+    .diff-top .dt-details summary::-webkit-details-marker { display: none; }
+    .diff-top .dt-details[open] { flex-basis: 100%; }
+    .diff-top .dt-details .diff-tickers { margin-top: 6px; }
+
+    /* ---- 오늘의 판단 (히어로 섹션) ---- */
+    .today-section {
+      border-top: 1px solid var(--line);
+      padding-top: 14px;
+      margin-bottom: 20px;
+    }
+    .today-head {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 4px;
+    }
+    .today-head h2 { margin: 0; font-size: 18px; letter-spacing: -0.01em; }
+    .today-meta { font-size: 11px; color: var(--muted); }
+    .today-group-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 14px 0 10px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .tg-pill {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 2px 9px;
+      border-radius: 999px;
+      color: #fff;
+    }
+    .today-empty {
+      background: var(--surface);
+      border: 1px dashed var(--line);
+      border-radius: 8px;
+      padding: 18px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .entry-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+      gap: 12px;
+    }
+
+    .entry-card {
       background: var(--surface);
       border: 1px solid var(--line);
       border-radius: 8px;
       box-shadow: var(--shadow);
-      padding: 14px 18px;
-      margin-bottom: 16px;
+      padding: 13px 14px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
+      min-width: 0;
     }
-    .diff-section h3 { margin: 0 0 10px; font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
-    .diff-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
-    .diff-chip { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 500; border: 1px solid var(--line); background: #f6f9f7; }
-    .diff-chip .count { font-weight: 700; font-family: 'DM Mono', monospace; }
-    .diff-chip.new-in  { border-color: #b2d5c8; background: #edf6f2; color: var(--accent); }
-    .diff-chip.dropped { border-color: #f0c4c2; background: #fdf0ef; color: var(--danger); }
-    .diff-chip.upgraded { border-color: #b2d5c8; background: #edf6f2; color: var(--accent); }
-    .diff-chip.downgraded { border-color: #f5dbb5; background: #fef6e8; color: var(--warn); }
-    .diff-tickers { font-size: 12px; color: var(--muted); line-height: 1.8; }
-    .diff-tickers strong { color: var(--text); font-family: 'DM Mono', monospace; font-size: 11px; }
+
+    .ec-head {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+    }
+    .ec-id { min-width: 0; flex: 1; }
+    .ec-ticker {
+      font-family: 'DM Mono', monospace;
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      cursor: pointer;
+      border-bottom: 1px dotted var(--accent);
+    }
+    .ec-name {
+      display: block;
+      overflow: hidden;
+      color: var(--muted);
+      font-size: 11px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      margin-top: 2px;
+    }
+    .ec-score {
+      font-family: 'DM Mono', monospace;
+      font-size: 17px;
+      font-weight: 700;
+      text-align: right;
+      line-height: 1.1;
+    }
+    .ec-score small {
+      display: block;
+      color: var(--muted);
+      font-family: 'DM Sans', sans-serif;
+      font-size: 10px;
+      font-weight: 500;
+    }
+
+    .ec-pills { display: flex; flex-wrap: wrap; gap: 5px; }
+    .ec-pill {
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 2px 8px;
+      color: var(--muted);
+      background: #fbfbfa;
+      font-size: 11px;
+      font-weight: 650;
+      white-space: nowrap;
+    }
+    .ec-pill.new { border-color: var(--accent); background: var(--accent); color: #fff; }
+    .ec-pill.grade-a { border-color: #b2d5c8; background: var(--accent-soft); color: #0e5b45; }
+    .ec-pill.grade-b { border-color: #e3d8ae; background: #eee9d9; color: var(--warn); }
+    .ec-pill.sig-surge { color: #0e5b45; background: #edf6f2; border-color: #b2d5c8; }
+    .ec-pill.sig-acc   { color: #3a4a9f; background: #f4f6fd; border-color: #c5cdf0; }
+    .ec-pill.sig-both  { color: #fff; background: #0e5b45; border-color: #0e5b45; }
+    .ec-pill.warn { border-color: #f0d8a0; background: #fef6e8; color: var(--warn); }
+    .ec-pill.fit  { border-color: var(--accent); background: none; color: var(--accent); }
+
+    .ec-chart { height: 74px; min-width: 0; }
+    .ec-chart svg { width: 100%; height: 100%; display: block; overflow: visible; }
+
+    .ec-nums {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--line);
+      overflow: hidden;
+    }
+    .ec-num { min-width: 0; padding: 7px 6px; background: #fbfbfa; text-align: center; }
+    .ec-num span {
+      display: block;
+      color: var(--muted);
+      font-size: 10px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .ec-num strong {
+      display: block;
+      margin-top: 2px;
+      font-family: 'DM Mono', monospace;
+      font-size: 12.5px;
+      font-weight: 600;
+    }
+    .ec-num strong.d-pos  { color: var(--accent); }
+    .ec-num strong.d-hot  { color: var(--warn); }
+    .ec-num strong.d-below { color: var(--muted); }
+
+    .ec-note {
+      font-size: 12.5px;
+      line-height: 1.55;
+      max-width: 70ch;
+      overflow-wrap: anywhere;
+    }
+    .ec-note.fallback { color: var(--muted); }
+
+    /* 대기 — 압축 행 */
+    .wait-list {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+    .wait-row {
+      display: grid;
+      grid-template-columns: 150px minmax(0, 1fr) auto;
+      gap: 4px 14px;
+      align-items: center;
+      padding: 9px 14px;
+      border-bottom: 1px solid #f0f0ec;
+    }
+    .wait-row:last-child { border-bottom: 0; }
+    .wr-id { min-width: 0; }
+    .wr-ticker {
+      font-family: 'DM Mono', monospace;
+      font-weight: 700;
+      cursor: pointer;
+      border-bottom: 1px dotted var(--accent);
+    }
+    .wr-name {
+      display: block;
+      overflow: hidden;
+      color: var(--muted);
+      font-size: 10.5px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .wr-reason { font-size: 12px; line-height: 1.5; max-width: 70ch; overflow-wrap: anywhere; }
+    .wr-nums {
+      font-family: 'DM Mono', monospace;
+      font-size: 11.5px;
+      color: var(--muted);
+      white-space: nowrap;
+      text-align: right;
+    }
+
+    /* 스킵 — 접힌 압축 목록 */
+    .skip-details { margin-top: 14px; font-size: 12px; }
+    .skip-details summary {
+      cursor: pointer; user-select: none; list-style: none;
+      display: flex; align-items: center; gap: 8px; color: var(--muted);
+    }
+    .skip-details summary::-webkit-details-marker { display: none; }
+    .skip-details summary::before { content: "▶"; font-size: 9px; transition: transform 0.15s; }
+    .skip-details[open] summary::before { transform: rotate(90deg); }
+    .skip-rows {
+      margin-top: 8px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 4px 14px;
+    }
+    .skip-row {
+      display: grid;
+      grid-template-columns: 110px minmax(0, 1fr);
+      gap: 12px;
+      padding: 6px 0;
+      border-bottom: 1px solid #f0f0ec;
+    }
+    .skip-row:last-child { border-bottom: 0; }
+    .skip-row .sr-ticker { font-family: 'DM Mono', monospace; font-weight: 700; cursor: pointer; border-bottom: 1px dotted var(--accent); align-self: start; justify-self: start; }
+    .skip-row .sr-reason { color: var(--muted); font-size: 11.5px; line-height: 1.5; max-width: 70ch; }
 
     .badge {
       display: inline-flex;
@@ -510,8 +796,9 @@ INDEX_HTML = r"""
     .empty { padding: 22px; color: var(--muted); text-align: center; }
     .error { color: var(--danger); }
 
-    .links { display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
-    .links a { color: var(--accent); text-decoration: none; font-weight: 650; }
+    .csv-links { display: inline-flex; gap: 8px; font-size: 11px; }
+    .csv-links a { color: var(--accent); text-decoration: none; font-weight: 650; }
+    .csv-links a:hover { text-decoration: underline; }
 
     .desc {
       background: var(--surface);
@@ -544,56 +831,110 @@ INDEX_HTML = r"""
     .desc li { margin-bottom: 4px; }
     .desc li strong { color: var(--text); }
 
-    /* Market environment banner */
+    /* ---- 리포트 헤더 밴드 (리서치 노트 문법: 굵은 잉크 룰 + 키커 + 무배경, 색은 배지에만) ---- */
+    .report-head {
+      border-top: 2px solid var(--text);
+      padding-top: 12px;
+      margin-bottom: 28px;
+    }
+
+    .report-head .status {
+      min-height: 0;
+      margin-bottom: 10px;
+      font-size: 12px;
+    }
+
     .market-banner {
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .mb-kicker {
+      margin: 10px 0 6px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+
+    .mb-state-row {
       display: flex;
       align-items: center;
-      gap: 12px;
-      padding: 12px 18px;
-      border-radius: 8px;
-      border: 1px solid var(--line);
-      border-left-width: 4px;
-      margin-bottom: 16px;
-      font-size: 13px;
-      line-height: 1.5;
+      gap: 10px;
+      margin-bottom: 4px;
     }
-
-    .market-banner.uptrend {
-      background: #edf6f2;
-      border-color: #b2d5c8;
-      border-left-color: var(--accent);
-    }
-
-    .market-banner.pressure {
-      background: #fef6e8;
-      border-color: #f0d8a0;
-      border-left-color: var(--warn);
-    }
-
-    .market-banner.correction {
-      background: #fdf0ef;
-      border-color: #f0c4c2;
-      border-left-color: var(--danger);
-    }
-
-    .market-banner .mb-icon { font-size: 18px; flex-shrink: 0; }
 
     .market-banner .mb-state {
+      font-size: 18px;
       font-weight: 700;
-      font-size: 14px;
+      letter-spacing: -0.01em;
+      color: var(--text);
     }
 
-    .market-banner.uptrend  .mb-state { color: var(--accent); }
-    .market-banner.pressure .mb-state { color: var(--warn); }
-    .market-banner.correction .mb-state { color: var(--danger); }
+    .mb-badge {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 4px;
+      white-space: nowrap;
+    }
 
-    .market-banner .mb-desc { color: var(--muted); }
+    .market-banner.uptrend    .mb-badge { background: #edf6f2; color: var(--accent); }
+    .market-banner.pressure   .mb-badge { background: #fef6e8; color: var(--warn); }
+    .market-banner.correction .mb-badge { background: #fdf0ef; color: var(--danger); }
+
+    .market-banner .mb-desc { color: var(--muted); max-width: 70ch; }
+
+    .market-banner .mb-ai {
+      margin-top: 12px;
+      padding-top: 10px;
+      border-top: 1px solid var(--line);
+      color: var(--text);
+      font-size: 12.5px;
+    }
+    .market-banner .mb-ai-head { margin-bottom: 6px; }
+    /* 라벨 붙은 독립 라인이라 2열 그리드 가능 — 열당 ~60ch 유지하며 전체 폭 사용 */
+    .market-banner .mb-ai-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      column-gap: 28px;
+      row-gap: 7px;
+    }
+    @media (max-width: 900px) {
+      .market-banner .mb-ai-grid { grid-template-columns: 1fr; }
+    }
+    .market-banner .mb-ai-row {
+      display: flex;
+      gap: 10px;
+      line-height: 1.55;
+    }
+    .market-banner .mb-ai-label {
+      flex: 0 0 62px;
+      font-weight: 700;
+      color: var(--muted);
+      font-size: 11.5px;
+      letter-spacing: 0.02em;
+      padding-top: 1px;
+    }
+    .market-banner .mb-ai-text { flex: 1; }
+    .market-banner .mb-ai .mb-ai-tag {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      padding: 0 5px;
+      margin-right: 6px;
+      vertical-align: 1px;
+    }
 
     /* Insight bar */
     .insight-bar {
       background: var(--surface);
       border: 1px solid var(--line);
-      border-left: 3px solid var(--accent);
       border-radius: 8px;
       box-shadow: var(--shadow);
       padding: 14px 18px;
@@ -616,6 +957,7 @@ INDEX_HTML = r"""
       color: var(--text);
       padding-left: 16px;
       position: relative;
+      max-width: 70ch;
     }
 
     .insight-bar li::before {
@@ -678,122 +1020,11 @@ INDEX_HTML = r"""
       margin-left: auto;
     }
 
-    .watchlist-groups {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 14px;
-    }
-
-    @media (max-width: 980px) {
-      .watchlist-groups { grid-template-columns: 1fr; }
-    }
-
-    .wl-group {
-      border: 1px solid var(--line);
-      border-radius: 7px;
-      overflow: hidden;
-    }
-
-    .wl-group-title {
-      font-size: 11px;
-      font-weight: 700;
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-      padding: 7px 12px;
-    }
-
-    .wl-group-title.g-entry { background: #edf6f2; color: #0e5b45; border-bottom: 1px solid #c8e8dc; }
-    .wl-group-title.g-watch { background: #fef6e8; color: var(--warn); border-bottom: 1px solid #f0d8a0; }
-    .wl-group-title.g-list  { background: #f0f0ec; color: var(--muted); border-bottom: 1px solid var(--line); }
-
-    .wl-rows { padding: 4px 0; max-height: 380px; overflow-y: auto; }
-
-    .wl-row {
-      padding: 8px 12px;
-      border-bottom: 1px solid #f4f4f0;
-    }
-
-    .wl-row:last-child { border-bottom: 0; }
-
-    .wl-row-top {
-      display: flex;
-      align-items: center;
-      gap: 7px;
-      margin-bottom: 3px;
-    }
-
-    .wl-ticker {
-      font-family: 'DM Mono', monospace;
-      font-weight: 700;
-      font-size: 13px;
-      letter-spacing: 0.03em;
-      cursor: pointer;
-      color: var(--accent);
-      border-bottom: 1px dotted var(--accent);
-    }
-
-    .wl-name {
-      font-size: 12px;
-      color: var(--muted);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      flex: 1;
-    }
-
-    .wl-grade {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      width: 20px;
-      height: 20px;
-      border-radius: 999px;
-      font-size: 10px;
-      font-weight: 700;
-      background: var(--accent-soft);
-      color: #0e5b45;
-      flex-shrink: 0;
-    }
-
-    .wl-grade.b { background: #eee9d9; color: var(--warn); }
-
-    .wl-comment {
-      font-size: 12px;
-      color: var(--muted);
-      line-height: 1.5;
-    }
-
-    .wl-sig {
-      font-size: 10px;
-      font-weight: 700;
-      padding: 1px 6px;
-      border-radius: 999px;
-      border: 1px solid;
-      white-space: nowrap;
-      flex-shrink: 0;
-    }
-    .wl-sig.sig-both  { color: #fff; background: #0e5b45; border-color: #0e5b45; }
-    .wl-sig.sig-surge { color: #0e5b45; background: #edf6f2; border-color: #b2d5c8; }
-    .wl-sig.sig-acc   { color: #3a4a9f; background: #f4f6fd; border-color: #c5cdf0; }
-
-    .wl-dist {
-      font-family: 'DM Mono', monospace;
-      font-size: 10px;
-      font-weight: 600;
-      padding: 1px 5px;
-      border-radius: 4px;
-      background: #f0f0ec;
-      color: var(--muted);
-      flex-shrink: 0;
-    }
-    .wl-dist.ok  { background: #edf6f2; color: #0e5b45; }
-    .wl-dist.far { background: #fef6e8; color: var(--warn); }
-
     .cluster-cards {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
       gap: 12px;
-      margin-bottom: 14px;
+      margin-bottom: 0;
     }
 
     .cluster-card {
@@ -853,7 +1084,7 @@ INDEX_HTML = r"""
       background: #fff;
     }
 
-    /* 신호 종류별 색: 서지 = 초록(즉시성), 매집 = 남색(지속성), 동시 = 초록 채움(최우선) */
+    /* 신호 종류별 색: 급증 = 초록(즉시성), 매집 = 남색(지속성), 동시 = 초록 채움(최우선) */
     .cc-ticker.t-acc  { color: #3a4a9f; border-color: #c5cdf0; background: #f4f6fd; }
     .cc-ticker.t-both { color: #fff; border-color: #0e5b45; background: #0e5b45; }
 
@@ -875,12 +1106,6 @@ INDEX_HTML = r"""
     .wl-legend .lg.surge { color: #0e5b45; background: #edf6f2; border-color: #b2d5c8; }
     .wl-legend .lg.acc   { color: #3a4a9f; background: #f4f6fd; border-color: #c5cdf0; }
     .wl-legend .lg.both  { color: #fff; background: #0e5b45; border-color: #0e5b45; }
-
-    .wl-empty {
-      padding: 10px 12px;
-      font-size: 12px;
-      color: var(--muted);
-    }
 
     /* Guide accordion */
     .guide-grid {
@@ -1044,8 +1269,6 @@ INDEX_HTML = r"""
 
     .tr-inline-chart-wrap svg { width: 100%; height: 100%; display: block; overflow: visible; }
 
-    .tr-inline-chart-wrap svg { width: 100%; height: 100%; overflow: visible; }
-
     /* Chart popup modal */
     .chart-overlay {
       display: none;
@@ -1175,11 +1398,532 @@ INDEX_HTML = r"""
 
     .chart-perplexity-btn:hover { background: var(--accent-soft); }
 
+    /* ---- HOME / 대시보드 탭 ---- */
+    .view-tabs {
+      display: flex; gap: 4px; align-self: center;
+      background: var(--surface); border: 1px solid var(--line);
+      border-radius: 8px; padding: 4px;
+    }
+    .vt-btn {
+      background: none; border: none; min-height: 30px; padding: 4px 20px;
+      border-radius: 6px; color: var(--muted); cursor: pointer;
+      font-size: 13px; font-weight: 600; letter-spacing: 0.02em;
+    }
+    .vt-btn.active { background: var(--accent); color: #fff; }
+    .vt-btn:not(.active):hover { background: #f0f0ec; color: var(--text); }
+
+    /* ---- HOME (소개) 뷰 ---- */
+    .hm-page { max-width: 780px; margin: 0 auto; padding: 16px 0 40px; font-size: 14.5px; line-height: 1.65; }
+    .hm-eyebrow {
+      font-size: 12px; font-weight: 700; letter-spacing: 0.12em;
+      text-transform: uppercase; color: var(--accent); margin: 0 0 10px;
+    }
+    .hm-title {
+      font-size: clamp(24px, 4vw, 31px); font-weight: 700; line-height: 1.3;
+      letter-spacing: -0.01em; margin: 0 0 14px; text-wrap: balance;
+    }
+    .hm-lede { font-size: 16px; color: var(--muted); margin: 0; max-width: 40em; }
+    .hm-lede strong { color: var(--text); font-weight: 700; }
+    .hm-section { margin-top: 52px; }
+    .hm-h {
+      font-size: 19px; font-weight: 700; letter-spacing: -0.01em;
+      margin: 0 0 6px; text-wrap: balance;
+    }
+    .hm-sub { font-size: 14px; color: var(--muted); margin: 0 0 20px; max-width: 44em; }
+    .hm-chip {
+      display: inline-block; padding: 2px 8px; border-radius: 6px;
+      background: #f0f0ec; font-size: 12px; color: var(--muted);
+      font-family: 'DM Mono', ui-monospace, Menlo, monospace; white-space: nowrap;
+    }
+    .hm-idea { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 20px; }
+    .hm-card {
+      background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+      padding: 16px 18px; box-shadow: var(--shadow);
+    }
+    .hm-card .hm-q { font-size: 12.5px; font-weight: 700; color: var(--accent); margin: 0 0 6px; }
+    .hm-card .hm-a { font-size: 14px; margin: 0; }
+    .hm-pool {
+      display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+      padding: 13px 16px; border-radius: 10px;
+      background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow);
+    }
+    .hm-pool .hm-n { font-size: 21px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .hm-pool .hm-d { font-size: 13px; color: var(--muted); }
+    .hm-pool.hm-result { border-color: var(--accent); background: var(--accent-soft); }
+    .hm-pool.hm-result .hm-n { color: var(--accent); }
+    .hm-gate { position: relative; margin-left: 18px; padding: 15px 0 15px 26px; border-left: 2px solid var(--line); }
+    .hm-gate::before {
+      content: ""; position: absolute; left: -6px; top: 24px;
+      width: 10px; height: 10px; border-radius: 50%;
+      background: var(--accent); border: 2px solid var(--bg);
+    }
+    .hm-gname { display: flex; align-items: baseline; gap: 6px; font-size: 15px; font-weight: 700; margin: 0 0 2px; }
+    .hm-gname .hm-idx { color: var(--accent); }
+    .hm-gname .hm-count {
+      margin-left: auto; font-size: 12.5px; font-weight: 600; color: var(--accent);
+      font-variant-numeric: tabular-nums; white-space: nowrap;
+    }
+    .hm-gwhy { font-size: 13.5px; color: var(--muted); margin: 0 0 8px; max-width: 42em; }
+    .hm-signals { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .hm-sig h4 { font-size: 15px; font-weight: 700; margin: 0 0 4px; }
+    .hm-sig p { font-size: 13.5px; color: var(--muted); margin: 0; }
+    .hm-sig-both { grid-column: 1 / -1; border-color: var(--accent); background: var(--accent-soft); }
+    .hm-sig-both p { color: var(--text); }
+    .hm-regime-wrap { overflow-x: auto; }
+    table.hm-regime {
+      width: 100%; border-collapse: separate; border-spacing: 0;
+      background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+      overflow: hidden; font-size: 14px; min-width: 480px; box-shadow: var(--shadow);
+    }
+    .hm-regime th, .hm-regime td { padding: 11px 16px; text-align: left; }
+    .hm-regime thead th {
+      font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase;
+      color: var(--muted); font-weight: 700; border-bottom: 1px solid var(--line);
+    }
+    .hm-regime tbody th { font-weight: 700; font-size: 13.5px; border-bottom: 1px solid var(--line); width: 38%; }
+    .hm-regime tbody td { border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+    .hm-regime tbody tr:last-child th, .hm-regime tbody tr:last-child td { border-bottom: none; }
+    .hm-regime td.hm-win { background: var(--accent-soft); font-weight: 700; }
+    .hm-regime td.hm-win .hm-tag {
+      display: inline-block; margin-left: 8px; font-size: 11px; font-weight: 700;
+      color: var(--accent); letter-spacing: 0.04em;
+    }
+    .hm-gdesc { display: block; font-size: 12px; color: var(--muted); font-weight: 400; }
+    .hm-now {
+      display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 999px;
+      background: var(--accent); color: #fff; font-size: 10.5px; font-weight: 700;
+      letter-spacing: 0.04em; text-transform: none; vertical-align: middle;
+    }
+    .hm-chart {
+      background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+      padding: 18px 20px 14px; box-shadow: var(--shadow);
+    }
+    .hm-chart-title { font-size: 13px; font-weight: 700; margin: 0 0 2px; }
+    .hm-chart-note { font-size: 12px; color: var(--muted); margin: 0 0 16px; }
+    .hm-bar-row { display: grid; grid-template-columns: 88px 1fr 122px; align-items: center; gap: 12px; padding: 7px 0; }
+    .hm-bar-row .hm-lbl { font-size: 13px; color: var(--text); font-weight: 600; }
+    .hm-track { position: relative; height: 12px; }
+    .hm-fill {
+      position: absolute; inset: 0 auto 0 0; border-radius: 0 4px 4px 0;
+      background: var(--accent); opacity: 0.55; min-width: 3px;
+    }
+    .hm-bar-row.hm-hero .hm-fill { opacity: 1; }
+    .hm-bar-row:hover .hm-fill { opacity: 0.85; }
+    .hm-bar-row.hm-hero:hover .hm-fill { opacity: 1; }
+    .hm-val { font-size: 13px; font-variant-numeric: tabular-nums; text-align: right; color: var(--text); white-space: nowrap; }
+    .hm-val small { color: var(--muted); font-size: 11.5px; }
+    .hm-bar-row.hm-hero .hm-val { font-weight: 700; }
+    .hm-baseline {
+      margin: 12px 0 0; padding-top: 12px; border-top: 1px solid var(--line);
+      font-size: 12.5px; color: var(--muted);
+    }
+    .hm-caveats { margin: 0; padding: 0; list-style: none; display: grid; gap: 10px; }
+    .hm-caveats li {
+      background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+      padding: 12px 16px; font-size: 13.5px; color: var(--muted); box-shadow: var(--shadow);
+    }
+    .hm-caveats li b { color: var(--text); }
+    .hm-footer { margin-top: 52px; padding-top: 16px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+    @media (prefers-reduced-motion: no-preference) { .hm-fill { transition: opacity 0.15s ease; } }
+
     @media (max-width: 980px) {
-      .controls, .grid, .metrics { grid-template-columns: 1fr; }
+      .grid { grid-template-columns: 1fr; }
       header, .status { flex-direction: column; align-items: stretch; }
       .step { grid-template-columns: 110px 1fr 44px 44px 44px; }
       .guide-grid { grid-template-columns: 1fr; }
+      .view-tabs { align-self: flex-start; }
+    }
+
+    @media (max-width: 720px) {
+      body {
+        font-size: 14px;
+        -webkit-text-size-adjust: 100%;
+      }
+
+      .shell {
+        width: 100%;
+        padding: max(14px, env(safe-area-inset-top)) 12px calc(28px + env(safe-area-inset-bottom));
+      }
+
+      header {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 12px;
+        margin-bottom: 14px;
+      }
+
+      header > div:first-child { min-width: 0; }
+      h1 { font-size: 24px; }
+      h1 .apex-sub { font-size: 10px; }
+      #universeLine { font-size: 12px; }
+
+      header > div:last-child {
+        grid-column: 1 / -1;
+        display: grid !important;
+        grid-template-columns: 1fr 1fr;
+        width: 100%;
+      }
+
+      header > div:last-child .btn-ghost {
+        min-height: 42px;
+        padding-inline: 10px;
+      }
+
+      .view-tabs {
+        align-self: start;
+        padding: 3px;
+      }
+
+      .vt-btn {
+        min-height: 34px;
+        padding-inline: 12px;
+      }
+
+      .status {
+        gap: 3px;
+        min-height: 0;
+        margin-bottom: 12px;
+        font-size: 12px;
+      }
+
+      .panel,
+      .watchlist-panel,
+      .desc,
+      .ticker-search,
+      .insight-bar {
+        padding: 14px;
+      }
+
+      .report-head { padding-top: 10px; margin-bottom: 22px; }
+      .market-banner .mb-state { font-size: 16px; }
+      .insight-bar li { padding-left: 12px; }
+
+      .watchlist-header {
+        align-items: flex-start;
+        flex-wrap: wrap;
+      }
+
+      .watchlist-header .wl-date {
+        order: 3;
+        width: 100%;
+        margin-left: 0;
+      }
+
+      .wl-legend { margin-left: auto; }
+      .cluster-cards { grid-template-columns: 1fr; }
+
+      .candidate-header {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 10px;
+      }
+
+      .candidate-header h2 { align-self: center; }
+
+      .candidate-count {
+        grid-column: 2;
+        grid-row: 1;
+        align-self: center;
+      }
+
+      .grade-group {
+        grid-column: 1 / -1;
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+      }
+
+      .grade-btn,
+      .mcap-btn,
+      .vd-btn,
+      .toggle-btn {
+        min-height: 44px;
+      }
+
+      .verdict-group {
+        grid-column: 1 / -1;
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+      }
+
+      .toggle-btn { grid-column: 1 / -1; }
+
+      .sector-select {
+        grid-column: 1 / -1;
+        width: 100%;
+        min-height: 42px;
+      }
+
+      .mcap-filter {
+        grid-column: 1 / -1;
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        gap: 8px;
+        overflow: hidden;
+      }
+
+      .mcap-group {
+        overflow-x: auto;
+        overscroll-behavior-inline: contain;
+        -webkit-overflow-scrolling: touch;
+      }
+
+      .mcap-btn { flex: 0 0 auto; }
+      .mcap-btn .mcap-tooltip { display: none !important; }
+      .mobile-sort { display: flex; grid-column: 1 / -1; }
+
+      /* 오늘의 판단 — 모바일 */
+      .entry-grid { grid-template-columns: 1fr; }
+      .today-head h2 { font-size: 17px; }
+      .wait-row {
+        grid-template-columns: minmax(0, 1fr) auto;
+        padding: 10px 12px;
+      }
+      .wr-id { grid-column: 1; }
+      .wr-nums { grid-column: 2; grid-row: 1; }
+      .wr-reason { grid-column: 1 / -1; }
+      .skip-row { grid-template-columns: 84px minmax(0, 1fr); }
+      .diff-top { margin-top: 0; }
+      .candidate-help { font-size: 11px !important; line-height: 1.55 !important; }
+
+      .table-wrap {
+        max-height: none;
+        overflow: visible;
+        border: 0;
+        border-radius: 0;
+        background: none;
+      }
+
+      .table-wrap > table { display: none; }
+      .mobile-candidate-list { display: grid; gap: 10px; }
+
+      .mobile-candidate-card {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--surface);
+        padding: 13px;
+        box-shadow: var(--shadow);
+      }
+
+      .mcc-head {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 9px;
+      }
+
+      .mcc-rank {
+        color: var(--muted);
+        font-family: 'DM Mono', monospace;
+        font-size: 11px;
+      }
+
+      .mcc-identity { min-width: 0; }
+      .mcc-ticker { font-size: 16px; }
+      .mcc-name {
+        display: block;
+        overflow: hidden;
+        color: var(--muted);
+        font-size: 11px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .mcc-score {
+        font-family: 'DM Mono', monospace;
+        font-size: 18px;
+        font-weight: 700;
+        text-align: right;
+      }
+
+      .mcc-score small {
+        display: block;
+        color: var(--muted);
+        font-family: 'DM Sans', sans-serif;
+        font-size: 10px;
+        font-weight: 500;
+      }
+
+      .mcc-badges {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 5px;
+        margin-top: 10px;
+      }
+
+      .mcc-pill {
+        display: inline-flex;
+        align-items: center;
+        min-height: 24px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 2px 7px;
+        color: var(--muted);
+        background: #fbfbfa;
+        font-size: 10px;
+        font-weight: 650;
+      }
+
+      .mcc-pill.grade-a { border-color: #b2d5c8; background: var(--accent-soft); color: #0e5b45; }
+      .mcc-pill.grade-b { border-color: #e3d8ae; background: #eee9d9; color: var(--warn); }
+      .mcc-pill.new { border-color: var(--accent); background: var(--accent); color: #fff; }
+      .mcc-pill.warn { border-color: #f0d8a0; background: #fef6e8; color: var(--warn); }
+
+      .mcc-metrics {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 1px;
+        margin-top: 11px;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--line);
+      }
+
+      .mcc-metric {
+        min-width: 0;
+        padding: 8px 6px;
+        background: #fbfbfa;
+        text-align: center;
+      }
+
+      .mcc-metric span {
+        display: block;
+        overflow: hidden;
+        color: var(--muted);
+        font-size: 9px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .mcc-metric strong {
+        display: block;
+        margin-top: 2px;
+        font-family: 'DM Mono', monospace;
+        font-size: 12px;
+      }
+
+      .mcc-foot {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        margin-top: 9px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .mcc-foot span:last-child { text-align: right; }
+
+      .step {
+        grid-template-columns: minmax(92px, 1fr) 42px 42px;
+        gap: 7px;
+      }
+
+      .step > div:first-child {
+        grid-column: 1;
+        grid-row: 1;
+        min-width: 0;
+        font-size: 12px;
+        line-height: 1.3;
+        overflow-wrap: anywhere;
+      }
+
+      .step .bar { grid-column: 1 / -1; grid-row: 2; }
+      .step .count { grid-column: 2; grid-row: 1; }
+      .step .removed { display: none; }
+      .step .pct { grid-column: 3; grid-row: 1; }
+
+      .funnel-params {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+      }
+
+      .funnel-params .chip {
+        width: 100%;
+        border-radius: 7px;
+        line-height: 1.45;
+        overflow-wrap: anywhere;
+      }
+
+      .grid > * { min-width: 0; }
+
+      #universeChips {
+        display: block;
+        width: 100%;
+        overflow: visible;
+      }
+
+      .sector-table {
+        width: 100%;
+        min-width: 0;
+        table-layout: fixed;
+        font-size: 11px;
+      }
+
+      .sector-table th,
+      .sector-table td {
+        padding-right: 3px;
+        padding-left: 3px;
+      }
+
+      .sector-table th:first-child,
+      .sector-table td:first-child {
+        width: 45%;
+        white-space: normal;
+        overflow-wrap: anywhere;
+      }
+
+      .sector-table th:nth-child(2),
+      .sector-table td:nth-child(2),
+      .sector-table th:nth-child(3),
+      .sector-table td:nth-child(3) { width: 14%; }
+
+      .sector-table th:nth-child(4),
+      .sector-table td:nth-child(4) { width: 27%; }
+
+      .sector-table .hit-bar { display: none; }
+      .sector-table .hit-rate { font-size: 11px; }
+
+      .ticker-search-row {
+        display: grid;
+        grid-template-columns: 1fr auto;
+      }
+
+      .ticker-search-row label { grid-column: 1 / -1; }
+      #tickerInput { width: 100%; min-height: 42px; }
+      #tickerSearchBtn { min-height: 42px; }
+
+      .tr-layout { flex-direction: column; }
+      .tr-info { max-width: none; }
+      .tr-inline-charts { min-height: 120px; }
+
+      .chart-overlay {
+        align-items: flex-end;
+        padding-top: env(safe-area-inset-top);
+      }
+
+      .chart-modal {
+        width: 100%;
+        max-height: calc(100dvh - env(safe-area-inset-top));
+        overflow-y: auto;
+        border-radius: 14px 14px 0 0;
+        padding: 18px 14px calc(16px + env(safe-area-inset-bottom));
+      }
+
+      .chart-grid { grid-template-columns: 1fr; }
+      .chart-modal-close { min-width: 40px; min-height: 40px; top: 8px; right: 8px; }
+      .chart-modal-name { padding-right: 30px; }
+
+      .hm-page { padding-top: 4px; }
+      .hm-section { margin-top: 38px; }
+      .hm-pool { align-items: flex-start; }
+      .hm-pool .hm-d { text-align: right; }
+      .hm-gate { margin-left: 10px; padding-left: 20px; }
+      .hm-bar-row { grid-template-columns: 74px 1fr; gap: 8px; }
+      .hm-val { grid-column: 2; }
+    }
+
+    @media (max-width: 560px) {
+      .hm-idea, .hm-signals { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -1188,135 +1932,237 @@ INDEX_HTML = r"""
     <header>
       <div>
         <h1><span class="apex-sub">Alpha Pulse Equity eXplorer</span>APEX</h1>
-        <div class="subtle" id="universeLine">Universe loading</div>
+        <div class="subtle" id="universeLine">유니버스 불러오는 중</div>
       </div>
+      <nav class="view-tabs" id="viewTabs">
+        <button type="button" class="vt-btn" data-view="home">HOME</button>
+        <button type="button" class="vt-btn" data-view="dashboard">대시보드</button>
+      </nav>
       <div style="display:flex;align-items:center;gap:8px">
-        <button id="refreshButton" type="button" class="btn-ghost">↻ Refresh</button>
-        <button id="runButton" type="button" class="btn-ghost" style="font-weight:600">▶ Run Screener</button>
+        <button id="refreshButton" type="button" class="btn-ghost">↻ 새로고침</button>
+        <button id="runButton" type="button" class="btn-ghost" style="font-weight:600">▶ 스크리너 실행</button>
       </div>
     </header>
 
-    <details class="desc">
-      <summary>필터링 방식</summary>
-      <ul>
-        <li><strong>시장 환경</strong> — SPY·QQQ 기반 4단계 분류: Confirmed Uptrend / Uptrend Under Pressure / Market in Correction. 하락장에서는 후보 출력 시 경고 배너 표시.</li>
-        <li><strong>유동성</strong> — 20일 평균 거래대금 ≥ 기준값. 저유동성 종목 제외.</li>
-        <li><strong>RS 20D 양수</strong> — 20일 SPY 대비 RS 변화율 &gt; 0. 시장 수익률을 상회하는 종목만 선별.</li>
-        <li><strong>MA60 위 + 상승</strong> — 종가 &gt; 60일 이동평균, MA60이 10일 전보다 높음.</li>
-        <li><strong>추세 구조</strong> — MA20 &gt; MA60 &gt; MA120 정배열 또는 최근 5일 내 MA20↑MA60 골든크로스(MA60 상승 중). 회복 초기 종목도 통과.</li>
-        <li><strong>과열 없음</strong> — 종가 ≤ MA20의 125%, 5일 수익률 &lt; 40%, 당일 수익률 &lt; 25%.</li>
-        <li><strong>등급 A</strong> — 위 조건 통과 + 거래량 품질(최근 10일 중 누적일(가격↑+거래량↑) ≥ 3 AND 분산일(가격↓+거래량↑) ≤ 1).</li>
-        <li><strong>등급 B</strong> — 위 조건만 통과, 거래량 품질 미충족.</li>
-        <li><strong>점수</strong> — RS 50D(25%) + RS 20D(20%) + RS 가속도(15%) + 섹터 RS(15%) + 50일 고점 근접도(15%) + 거래량비율(10%) percentile 가중합. 전체 종목 대상으로 계산되므로 탈락 종목도 상대 순위 파악 가능.</li>
-        <li><strong>Stage</strong> — 돌파 후 경과일 기준: Early Breakout(≤7일) / Trending(≤35일) / Extended(35일+). 조기 돌파 종목이 가장 안전한 구간.</li>
-        <li><strong>Pivot / vs Pivot</strong> — 50일 고점을 피벗 기준가로 사용. vs Pivot이 +5% 초과(⚠)면 추격 위험.</li>
-        <li><strong>Base</strong> — 베이스 기간 변동성 대비 최근 변동성 비율(높을수록 안정적 베이스 후 돌파).</li>
-        <li><strong>Sector 52W</strong> — 섹터 ETF의 52주 고점 대비 현재 위치. 섹터 전체 건강도 파악용.</li>
-      </ul>
-    </details>
+    <div id="homeView" hidden>
+      <div class="hm-page">
+        <p class="hm-eyebrow">US Stock Screener</p>
+        <h2 class="hm-title">미국 주식 1,000개 중에서,<br>오늘 지켜볼 30개를 골라주는 도구</h2>
+        <p class="hm-lede">
+          매일 장 마감 후 자동으로 돌아가는 개인용 스크리너입니다. 종목을 <strong>사주는 것이 아니라</strong>,
+          관찰할 가치가 있는 후보를 <strong>추려서 순서대로 보여주는</strong> 것까지가 이 도구의 일입니다.
+        </p>
 
-    <details class="desc">
-      <summary>지표 이해하기</summary>
-      <dl class="guide-grid">
-        <div class="guide-term">
-          <dt>상대강도 (RS, Relative Strength)</dt>
-          <dd>SPY(미국 전체 시장)를 기준으로 이 주식이 얼마나 더 강하게 움직이고 있는지 나타내는 비율입니다. RS &gt; 0이면 시장보다 더 많이 올랐다는 의미, RS &lt; 0이면 시장보다 뒤처지고 있다는 의미입니다.</dd>
+        <div class="hm-idea">
+          <div class="hm-card">
+            <p class="hm-q">어떤 종목을 찾나</p>
+            <p class="hm-a"><b>거래량이 말해주는 종목.</b> 거래가 평소보다 눈에 띄게 늘었다는 건, 시장의 큰손들이 이 종목에서 무언가를 하고 있다는 신호입니다.</p>
+          </div>
+          <div class="hm-card">
+            <p class="hm-q">어떤 순서로 보여주나</p>
+            <p class="hm-a"><b>시장보다 강한 순서.</b> 같은 후보라도 S&amp;P 500 지수보다 잘 가고 있는 종목(상대강도)을 앞에 세웁니다.</p>
+          </div>
         </div>
-        <div class="guide-term">
-          <dt>RS 20D / RS 50D</dt>
-          <dd>각각 최근 20일·50일 동안 SPY 대비 상대강도 변화율입니다. 단기(20D)는 최근 모멘텀, 중기(50D)는 추세의 지속성을 봅니다. 둘 다 양수면 단·중기 모두 시장 대비 강한 흐름.</dd>
-        </div>
-        <div class="guide-term">
-          <dt>MA60 위 + 상승 + 추세 구조</dt>
-          <dd>60일 이동평균선(최근 60일 평균 주가)보다 현재 주가가 위에 있고, 그 평균선 자체도 10일 전보다 높아진 상태입니다. 추가로 MA20 &gt; MA60 &gt; MA120 정배열이거나, 최근 5일 내 MA20이 MA60을 돌파(골든크로스)했어야 합니다. 단순히 평균 위에 있는 게 아니라 단·중·장기 추세가 모두 위를 향하고 있다는 의미입니다.</dd>
-        </div>
-        <div class="guide-term">
-          <dt>가격-거래량 4분면 (P/V)</dt>
-          <dd>당일 가격과 거래량 방향을 조합한 신호입니다. ↑+V(누적/Accumulation): 가격↑+거래량 평균 초과 → 가장 건강한 매수세. ↑–V(약한 상승): 가격↑+거래량 부족 → 신뢰도 낮음. ↓+V(분산/Distribution): 가격↓+거래량 초과 → 기관 매도 경고. ↓–V(소강/Dry-up): 가격↓+거래량 부족 → 조정 시 정상.</dd>
-        </div>
-        <div class="guide-term">
-          <dt>거래량 강도 (Vol Str)</dt>
-          <dd>당일 거래량의 20일 평균 대비 배수입니다. 1.5x 이상은 "관심", 2.0x 이상은 "주목", 5.0x 이상은 "확신" 신호로 분류합니다. 정배열 + 누적 + 확신 거래량이 결합되면 강한 매수 시점.</dd>
-        </div>
-        <div class="guide-term">
-          <dt>과열 없음</dt>
-          <dd>종가가 MA20의 125% 이하, 최근 5일 수익률 40% 미만, 당일 수익률 25% 미만. 이미 단기간에 급등한 종목을 제외합니다. 추격 매수 위험이 높은 종목보다 아직 상승 여력이 남은 종목을 봅니다.</dd>
-        </div>
-        <div class="guide-term">
-          <dt>등급 A / B</dt>
-          <dd><strong>A등급</strong>: 하드 필터 통과 + 최근 5일 평균 거래량이 20일 평균의 1.3배 이상 + 종가가 당일 범위 50% 이상. 단발성 거래량 이벤트가 아니라 며칠간 수급이 유지되고 있음을 확인한 종목.<br><strong>B등급</strong>: 추세 조건은 충족하나 거래량 지속성 미확인. 관심 종목으로 등록 후 거래량 추이를 별도 확인 권장.</dd>
-        </div>
-        <div class="guide-term">
-          <dt>점수 (Score) · 섹터 RS</dt>
-          <dd><strong>점수</strong>: RS 50D(25%) + RS 20D(20%) + RS 가속도(15%) + 섹터 RS(15%) + 50일 고점 근접도(15%) + 거래량비율(10%)를 percentile 가중합으로 계산한 0~1 사이 값. 하드 필터 통과 여부와 무관하게 전체 종목에 부여되므로, 탈락 종목도 상대 강도 비교에 활용 가능.<br><strong>RS 가속도</strong>: RS 20D에서 RS 50D를 뺀 값. 양수면 단기 RS가 중기 RS를 앞서고 있어 모멘텀이 강화 중임을 의미.<br><strong>섹터 RS</strong>: SPY 대신 해당 섹터 ETF(IT→XLK 등)와 비교한 상대강도. 섹터 전체가 강한 건지, 그 안에서 특히 강한 종목인지 파악하는 데 활용.</dd>
-        </div>
-        <div class="guide-term">
-          <dt>50일 고점 근접 (50D High)</dt>
-          <dd>최근 50일 최고가 대비 현재 종가 비율. 하드 필터에서는 제외되고 점수에 반영됩니다. 1.0에 가까울수록 고점 부근에서 강하게 버티고 있는 종목.</dd>
-        </div>
-      </dl>
-    </details>
 
-    <div class="ticker-search">
-      <div class="ticker-search-row">
-        <label>티커 검색</label>
-        <input type="text" id="tickerInput" placeholder="예: AAPL" autocomplete="off" spellcheck="false" maxlength="10">
-        <button type="button" id="tickerSearchBtn">조회</button>
+        <section class="hm-section">
+          <p class="hm-eyebrow">Step 1 — 거르기</p>
+          <h3 class="hm-h">세 개의 관문</h3>
+          <p class="hm-sub">매일 세 가지 질문을 통과한 종목만 후보가 됩니다. 이동평균이나 차트 모양으로 탈락시키지 않습니다 — 그건 다음 단계에서 참고 정보로만 씁니다.</p>
+
+          <div class="hm-pool">
+            <span class="hm-n" id="hmUniverse">—</span>
+            <span class="hm-d">미국 시가총액 상위 종목 (매월 갱신)</span>
+          </div>
+          <div class="hm-gate">
+            <p class="hm-gname"><span class="hm-idx">①</span>사고팔기 충분한가 <span class="hm-count" id="hmGate1"></span></p>
+            <p class="hm-gwhy">하루 500억 원어치 이상 거래되는 종목만. 내 주문이 가격을 밀지 않아야 합니다.</p>
+            <span class="hm-chip">20일 평균 거래대금 ≥ $50M</span>
+          </div>
+          <div class="hm-gate">
+            <p class="hm-gname"><span class="hm-idx">②</span>시장보다 강한가 <span class="hm-count" id="hmGate2"></span></p>
+            <p class="hm-gwhy">최근 한 달간 S&amp;P 500보다 못 갔다면 제외. 시장에 지고 있는 종목은 기다릴 이유가 없습니다.</p>
+            <span class="hm-chip">SPY 대비 20일 상대강도 &gt; 0</span>
+          </div>
+          <div class="hm-gate">
+            <p class="hm-gname"><span class="hm-idx">③</span>거래량 사건이 있었나 <span class="hm-count" id="hmGate3"></span></p>
+            <p class="hm-gwhy">아래 두 신호 중 하나라도 켜져야 합니다. 아무 일도 없는 종목은 후보가 아닙니다.</p>
+            <span class="hm-chip">당일 급증 OR 지속 매집</span>
+          </div>
+          <div class="hm-pool hm-result">
+            <span class="hm-n" id="hmCands">—</span>
+            <span class="hm-d" id="hmCandsDate">오늘의 후보</span>
+          </div>
+        </section>
+
+        <section class="hm-section">
+          <p class="hm-eyebrow">Step 2 — 신호</p>
+          <h3 class="hm-h">거래량이 보내는 두 가지 신호</h3>
+          <p class="hm-sub">둘 다 "누군가 조용히, 혹은 요란하게 사 모으고 있다"는 흔적입니다.</p>
+          <div class="hm-signals">
+            <div class="hm-card hm-sig">
+              <h4>급증 <span class="hm-chip">surge</span></h4>
+              <p>오늘 하루 거래량이 평소의 1.5~5배로 튀면서 주가도 올랐다. 방금 시장의 주목을 받기 시작했다는 뜻.</p>
+            </div>
+            <div class="hm-card hm-sig">
+              <h4>매집 <span class="hm-chip">acc</span></h4>
+              <p>최근 10일 중 6일 이상, 평소보다 많은 거래량과 함께 올랐다. 요란하지 않게 꾸준히 사 모으는 중이라는 뜻.</p>
+            </div>
+            <div class="hm-card hm-sig hm-sig-both">
+              <h4>급증 + 매집 <span class="hm-chip">surge+acc</span></h4>
+              <p>두 신호가 동시에 켜진 경우. 백테스트에서 가장 강한 조합으로, 20일 뒤 시장 대비 평균 <b>+4.0%</b>, 승률 <b>60%</b>를 기록했습니다.</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="hm-section">
+          <p class="hm-eyebrow">Step 3 — 순서 정하기</p>
+          <h3 class="hm-h">시장 분위기에 맞는 종목을 앞으로</h3>
+          <p class="hm-sub">
+            후보는 상대강도 중심의 점수로 정렬합니다. 여기에 한 가지 조정이 들어갑니다 —
+            후보를 <b>추세형(A)</b>과 <b>반등형(B)</b>으로 나누면, 시장 분위기에 따라 잘 되는 쪽이 뒤바뀌기 때문입니다.
+          </p>
+          <div class="hm-regime-wrap">
+            <table class="hm-regime">
+              <thead>
+                <tr>
+                  <th scope="col">유형</th>
+                  <th scope="col">상승장에서 <span class="hm-now" id="hmNowUp" style="display:none">지금</span></th>
+                  <th scope="col">조정장에서 <span class="hm-now" id="hmNowDown" style="display:none">지금</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th scope="row">A · 추세형<span class="hm-gdesc">상승 추세를 타고 있는 종목</span></th>
+                  <td class="hm-win">+2.5%<span class="hm-tag">우선</span></td>
+                  <td>+0.5%</td>
+                </tr>
+                <tr>
+                  <th scope="row">B · 반등형<span class="hm-gdesc">바닥에서 돌아서는 종목</span></th>
+                  <td>+1.1%</td>
+                  <td class="hm-win">+2.7%<span class="hm-tag">우선</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="hm-sub" style="margin-top:14px;">
+            그래서 상승장엔 A에, 조정장엔 B에 작은 가산점을 줘서 <b>지금 분위기에 맞는 쪽을 목록 위로</b> 올립니다.
+            어느 쪽도 탈락시키지는 않습니다 — 순서만 바뀝니다. (수치: 20일 뒤 시장 대비 초과수익 평균)
+          </p>
+        </section>
+
+        <section class="hm-section">
+          <p class="hm-eyebrow">근거</p>
+          <h3 class="hm-h">이 규칙들은 백테스트로 골랐습니다</h3>
+          <p class="hm-sub">과거 63주 동안 매주 "그 시점에 스크리너를 돌렸다면"을 재현해, 신호별로 20일 뒤 성과를 측정했습니다.</p>
+          <div class="hm-chart">
+            <p class="hm-chart-title">신호별 20일 뒤 초과수익 (S&amp;P 500 대비 평균)</p>
+            <p class="hm-chart-note">2025-02 ~ 2026-05 · 주간 스냅샷 63개 · 표본 58,687행</p>
+            <div class="hm-bar-row">
+              <span class="hm-lbl">신호 없음</span>
+              <div class="hm-track"><div class="hm-fill" style="width:8.8%;"></div></div>
+              <span class="hm-val">+0.35% <small>승률 48%</small></span>
+            </div>
+            <div class="hm-bar-row">
+              <span class="hm-lbl">매집</span>
+              <div class="hm-track"><div class="hm-fill" style="width:31.5%;"></div></div>
+              <span class="hm-val">+1.26% <small>승률 53%</small></span>
+            </div>
+            <div class="hm-bar-row">
+              <span class="hm-lbl">급증</span>
+              <div class="hm-track"><div class="hm-fill" style="width:53.5%;"></div></div>
+              <span class="hm-val">+2.14% <small>승률 53%</small></span>
+            </div>
+            <div class="hm-bar-row hm-hero">
+              <span class="hm-lbl">급증+매집</span>
+              <div class="hm-track"><div class="hm-fill" style="width:100%;"></div></div>
+              <span class="hm-val">+4.00% <small>승률 60%</small></span>
+            </div>
+            <p class="hm-baseline">
+              점수 상위 10종목만 담는다면: 국면 가산점 적용 전 +2.8% → 적용 후 <b>+3.1%</b> (승률 52.8% → 54.3%).
+            </p>
+          </div>
+        </section>
+
+        <section class="hm-section">
+          <p class="hm-eyebrow">정직하게</p>
+          <h3 class="hm-h">이 도구가 하지 않는 것</h3>
+          <ul class="hm-caveats">
+            <li><b>매수 추천이 아닙니다.</b> "오늘 이 종목들을 들여다볼 가치가 있다"까지만 말해줍니다. 판단과 리스크 관리는 사람의 몫입니다.</li>
+            <li><b>백테스트는 상대 비교용입니다.</b> 유니버스가 "현재의" 상위 1,000종목이라 생존 편향이 있고, 거래 비용도 반영돼 있지 않습니다. 절대 수익률 약속이 아니라 규칙 간 우열을 가리는 근거입니다.</li>
+            <li><b>우위는 온건합니다.</b> 승률 53~60%짜리 통계적 기울기이지, 확실한 예측이 아닙니다. 개별 종목은 얼마든지 빗나갑니다.</li>
+          </ul>
+        </section>
+
+        <div class="hm-footer">
+          데이터: yfinance 일봉 · 매일 장 마감 후 자동 실행 · 수치 근거는 저장소의 outputs/backtest/ 참조
+        </div>
       </div>
-      <div id="tickerResult"></div>
     </div>
 
-    <div class="status">
-      <div id="statusText">Ready</div>
-      <div id="runMeta" class="subtle"></div>
-    </div>
+    <div id="dashboardView">
 
-    <div id="marketBanner" style="display:none" class="market-banner">
-      <span class="mb-icon" id="marketBannerIcon"></span>
-      <div>
-        <div class="mb-state" id="marketBannerState"></div>
+
+
+
+    <div class="report-head">
+      <div class="status">
+        <div id="statusText">대기 중</div>
+        <div id="runMeta" class="subtle"></div>
+      </div>
+
+      <div id="diffTop" style="display:none" class="diff-top">
+        <span class="dt-label">전일 대비 <span id="diffDateLabel"></span></span>
+        <div class="diff-chips" id="diffChips"></div>
+        <details class="dt-details">
+          <summary>상세</summary>
+          <div class="diff-tickers" id="diffTickers"></div>
+        </details>
+      </div>
+
+      <div id="marketBanner" style="display:none" class="market-banner">
+        <p class="mb-kicker">Market Regime</p>
+        <div class="mb-state-row">
+          <span class="mb-state" id="marketBannerState"></span>
+          <span class="mb-badge" id="marketBannerBadge"></span>
+        </div>
         <div class="mb-desc" id="marketBannerDesc"></div>
+        <div class="mb-ai" id="marketBannerAI" style="display:none"></div>
       </div>
     </div>
 
-    <section class="metrics" id="metrics"></section>
+    <section class="today-section" id="todaySection" style="display:none">
+      <div class="today-head">
+        <h2>오늘의 판단</h2>
+        <span class="today-meta" id="todayMeta"></span>
+      </div>
+      <div id="todayBody"></div>
+    </section>
 
     <div class="insight-bar" id="insightBar"><ul id="insightList"></ul></div>
 
-    <div id="diffSection" style="display:none" class="diff-section">
-      <h3>전일 대비 변경사항 <span id="diffDateLabel" style="font-weight:400;text-transform:none;letter-spacing:0"></span></h3>
-      <div class="diff-chips" id="diffChips"></div>
-      <div class="diff-tickers" id="diffTickers"></div>
-    </div>
-
-    <section class="grid">
-      <div class="panel">
-        <h2>Universe</h2>
-        <div class="chips" id="universeChips"></div>
-      </div>
-      <div class="panel">
-        <h2>Filter Funnel</h2>
-        <div class="funnel" id="filterFunnel"></div>
-      </div>
-    </section>
-
     <div class="watchlist-panel" id="watchlistPanel">
       <div class="watchlist-header">
-        <h3>오늘의 종목 해석</h3>
+        <h3>섹터별 후보 분석</h3>
         <span class="wl-legend">
-          <span class="lg surge">서지</span>
+          <span class="lg surge">급증</span>
           <span class="lg acc">매집</span>
-          <span class="lg both">서지+매집</span>
+          <span class="lg both">급증+매집</span>
         </span>
         <span class="wl-date" id="watchlistDate"></span>
       </div>
       <div class="cluster-cards" id="clusterCards" style="display:none"></div>
-      <div class="watchlist-groups" id="watchlistGroups"></div>
     </div>
 
-    <section class="panel">
+    <section class="panel" style="margin-bottom:16px">
       <div class="candidate-header">
-        <h2>Candidates</h2>
+        <h2>후보 목록</h2>
+        <div class="verdict-group">
+          <button class="vd-btn active" data-verdict="all">전체</button>
+          <button class="vd-btn" data-verdict="진입 검토">진입 검토</button>
+          <button class="vd-btn" data-verdict="대기">대기</button>
+          <button class="vd-btn" data-verdict="스킵">스킵</button>
+        </div>
+        <button class="toggle-btn" id="newOnlyBtn" type="button" aria-pressed="false">오늘 신규만</button>
         <div class="grade-group">
           <button class="grade-btn active" data-grade="all">전체</button>
           <button class="grade-btn" data-grade="A">A (MA강세)</button>
@@ -1336,9 +2182,102 @@ INDEX_HTML = r"""
           </div>
         </div>
         <span class="candidate-count" id="candidateCount"></span>
+        <span class="csv-links" id="csvLinks"></span>
+        <div class="mobile-sort">
+          <label for="mobileSort">정렬</label>
+          <select id="mobileSort">
+            <option value="score:desc">Score 높은 순</option>
+            <option value="score_3m:desc">3M 높은 순</option>
+            <option value="rs_spy_20d:desc">RS 20D 높은 순</option>
+            <option value="days_since_trigger:asc">신규 신호 우선</option>
+            <option value="ticker:asc">티커 이름순</option>
+          </select>
+        </div>
+      </div>
+      <div class="candidate-help" style="font-size:12px;color:var(--muted);margin:2px 0 10px;line-height:1.6;max-width:70ch">
+        전체 후보 목록 (부록) — 아침 판단은 상단 <b>오늘의 판단</b> 카드에서 끝내고, 여기서는 판정·신규 필터로 후보 전체를 훑거나 정렬해 교차 확인하세요. <b>D+ = NEW</b>는 오늘 신규 트리거, D+1~4는 관찰 유지 중(트리거 후 5거래일, RS 꺾이면 자동 탈락). 기준가 대비 +5% 초과(⚠)는 추격 구간.
       </div>
       <div class="table-wrap" id="candidateTable"></div>
     </section>
+
+    <section class="grid">
+      <div class="panel">
+        <h2>필터 퍼널</h2>
+        <div class="funnel" id="filterFunnel"></div>
+      </div>
+      <div class="panel">
+        <h2>유니버스 구성</h2>
+        <div class="chips" id="universeChips"></div>
+      </div>
+    </section>
+
+    <div class="ticker-search">
+      <div class="ticker-search-row">
+        <label>티커 검색</label>
+        <input type="text" id="tickerInput" placeholder="예: AAPL" autocomplete="off" spellcheck="false" maxlength="10">
+        <button type="button" id="tickerSearchBtn">조회</button>
+      </div>
+      <div id="tickerResult"></div>
+    </div>
+
+    <details class="desc">
+      <summary>필터링 방식</summary>
+      <ul>
+        <li><strong>프레임</strong> — "거래량 이벤트로 주목 → RS로 우선순위". MA 추세와 과열은 배제 조건이 아니라 등급·경고 라벨로만 표시.</li>
+        <li><strong>① 유동성</strong> — 20일 평균 거래대금 ≥ $50M. 저유동성 종목 제외.</li>
+        <li><strong>② RS 필수</strong> — 20일 SPY 대비 RS 변화율 &gt; 0. 시장 수익률을 상회하는 종목만.</li>
+        <li><strong>③ 주목 트리거</strong> — 당일 급증(거래량 1.5~5배 + 양봉) OR 지속 매집(10일 중 매집일 6일+). Signal: surge / acc / surge+acc(최강 — 백테스트 20d 초과수익 +4.0%).</li>
+        <li><strong>등급</strong> — A: MA60 위 + MA60 상승(추세 컨텍스트) / B: MA 약세(반등 성격). 배제가 아닌 성격 구분 — 조정장에서는 B가 A보다 우수.</li>
+        <li><strong>경고 라벨(배제 아님)</strong> — 과열(MA20×1.25 초과 등) / 거래량5x+(어닝스 갭 의심) / 분산N일(매도 압력).</li>
+        <li><strong>점수 v3</strong> — <span data-score-weights>SPY RS 50D 25% + SPY RS 20D 20% + 상승/하락일 거래량비 20D 20% + 섹터 RS 20D 15% + 섹터 RS 50D 10% + RS선 고점 근접 10%</span> percentile 가중합 + 국면-등급 정합 보너스(+<span data-regime-bonus>0.10</span>: 상승장→A, 조정장→B).</li>
+        <li><strong>매수기준가</strong> — 종가가 MA20 위면 MA20×1.01, 아니면 MA60×1.01. 눌림목 진입 기준선.</li>
+        <li><strong>시장 국면 (3축 종합)</strong> — ① <b>추세</b>: SPY·QQQ의 MA60 히스테리시스(-1% 밑 2일 연속이면 이탈, +1% 위면 복귀 — 경계 왕복 방지) ② <b>시장 폭</b>: 유니버스 중 MA60 위 종목 비율 — 하한 감지기(40% 미만이면 약세 투표, 그 외 중립). 개별주 셋업이 먹히는 장인지 판별: 후보 성과가 폭 40% 밑에서만 붕괴(-3.2%)하고 그 위에선 폭과 무관 ③ <b>VIX 기간구조</b>: VIX÷VIX3M(0.95 미만 콘탱고 = 옵션시장 평온, 1.0 초과 백워데이션 = 즉각적 공포). 합산 후 새 국면이 3일 유지될 때만 전환(연 전환 27→14회). 후보 제거 없이 등급 보너스·판정에만 사용.</li>
+      </ul>
+    </details>
+
+    <details class="desc">
+      <summary>지표 이해하기</summary>
+      <dl class="guide-grid">
+        <div class="guide-term">
+          <dt>상대강도 (RS, Relative Strength)</dt>
+          <dd>SPY(미국 전체 시장)를 기준으로 이 주식이 얼마나 더 강하게 움직이고 있는지 나타내는 비율입니다. RS &gt; 0이면 시장보다 더 많이 올랐다는 의미, RS &lt; 0이면 시장보다 뒤처지고 있다는 의미입니다.</dd>
+        </div>
+        <div class="guide-term">
+          <dt>RS 20D / RS 50D</dt>
+          <dd>각각 최근 20일·50일 동안 SPY 대비 상대강도 변화율입니다. 단기(20D)는 최근 모멘텀, 중기(50D)는 추세의 지속성을 봅니다. 둘 다 양수면 단·중기 모두 시장 대비 강한 흐름.</dd>
+        </div>
+        <div class="guide-term">
+          <dt>MA 컨텍스트 (등급의 기준)</dt>
+          <dd>60일 이동평균선보다 주가가 위에 있고 그 평균선 자체도 10일 전보다 높으면 "추세 속 신호"(A등급), 아니면 "반등 성격"(B등급)으로 구분합니다. 필터가 아니라 성격 구분입니다 — MA 조건으로 종목을 탈락시키지 않습니다.</dd>
+        </div>
+        <div class="guide-term">
+          <dt>가격-거래량 4분면 (P/V)</dt>
+          <dd>당일 가격과 거래량 방향을 조합한 신호입니다. ↑+V(누적/Accumulation): 가격↑+거래량 평균 초과 → 가장 건강한 매수세. ↑–V(약한 상승): 가격↑+거래량 부족 → 신뢰도 낮음. ↓+V(분산/Distribution): 가격↓+거래량 초과 → 기관 매도 경고. ↓–V(소강/Dry-up): 가격↓+거래량 부족 → 조정 시 정상.</dd>
+        </div>
+        <div class="guide-term">
+          <dt>거래량 강도 (Vol Str)</dt>
+          <dd>당일 거래량의 20일 평균 대비 배수입니다. 1.5x 이상은 "관심", 2.0x 이상은 "주목", 5.0x 이상은 "확신" 신호로 분류합니다. 정배열 + 누적 + 확신 거래량이 결합되면 강한 매수 시점.</dd>
+        </div>
+        <div class="guide-term">
+          <dt>경고 라벨 (배제 아님)</dt>
+          <dd><strong>과열</strong>: 종가가 MA20의 125% 초과 또는 5일 40%+ / 20일 60%+ / 당일 25%+ 급등 — 추격 위험 표시. <strong>거래량5x+</strong>: 거래량이 평균 5배 이상 — 어닝스 갭 의심. <strong>분산N일</strong>: 최근 10일 내 분산일(가격↓+거래량↑) 3일 이상 — 매도 압력. 후보에서 빼지 않고 라벨로만 표시하므로 포지션 크기·진입 타이밍 판단에 활용하세요.</dd>
+        </div>
+        <div class="guide-term">
+          <dt>등급 A / B</dt>
+          <dd><strong>A등급</strong>: 종가 &gt; MA60 + MA60 상승 — 상승 추세 속에서 나온 신호(추세형).<br><strong>B등급</strong>: MA 약세 — 바닥권 반등 성격. B가 열등한 게 아닙니다: 백테스트에서 상승장은 A(+2.5%)가, 조정장은 B(+2.7%)가 우수했고, 현재 국면에 맞는 쪽에 점수 보너스 +0.10이 붙어 목록 위로 올라옵니다.</dd>
+        </div>
+        <div class="guide-term">
+          <dt>점수 (Score) · 섹터 RS</dt>
+          <dd><strong>점수 v3</strong>: <span data-score-weights>SPY RS 50D 25% + SPY RS 20D 20% + 상승/하락일 거래량비 20D 20% + 섹터 RS 20D 15% + 섹터 RS 50D 10% + RS선 고점 근접 10%</span>의 percentile 가중합. 2026-08-21 리스크 조정 재검증으로 개편 — 매집일수·거래량추세는 예측력 부재로 제거. 여기에 국면-등급 정합 보너스(+<span data-regime-bonus>0.10</span>)가 더해집니다. 하드 필터 통과 여부와 무관하게 전체 종목에 부여되므로, 탈락 종목도 상대 강도 비교에 활용 가능.<br><strong>섹터 RS</strong>: SPY 대신 해당 섹터 ETF(IT→XLK 등)와 비교한 상대강도. 섹터 전체가 강한 건지, 그 안에서 특히 강한 종목인지 파악하는 데 활용.</dd>
+        </div>
+        <div class="guide-term">
+          <dt>50일 고점 근접 (50D High)</dt>
+          <dd>최근 50일 최고가 대비 현재 종가 비율. 필터·점수 어디에도 반영되지 않는 참고 지표입니다(백테스트에서 예측력 없음 확인). 1.0에 가까울수록 고점 부근에서 버티고 있는 종목.</dd>
+        </div>
+      </dl>
+    </details>
+
+    </div><!-- /dashboardView -->
   </main>
 
   <div class="chart-overlay" id="chartOverlay">
@@ -1396,15 +2335,15 @@ INDEX_HTML = r"""
     const runButton        = document.getElementById("runButton");
     const statusText = document.getElementById("statusText");
     const runMeta = document.getElementById("runMeta");
-    const metrics = document.getElementById("metrics");
     const universeLine = document.getElementById("universeLine");
     const universeChips = document.getElementById("universeChips");
     const filterFunnel = document.getElementById("filterFunnel");
     const candidateTable = document.getElementById("candidateTable");
     const candidateCount = document.getElementById("candidateCount");
     const sectorFilter = document.getElementById("sectorFilter");
+    const mobileSort = document.getElementById("mobileSort");
 
-    // 결정용 핵심 컬럼만 표시 — 상세 지표는 CSV·티커 조회에서 확인
+    // 결정용 핵심 컬럼만 표시 — RS 상세·매집일·50D High·시총 등 참고 지표는 티커 조회/CSV에서 확인
     const columns = [
       ["_diff",                  "",             "diff"],
       ["_rank",                  "#",            "rank"],
@@ -1412,18 +2351,15 @@ INDEX_HTML = r"""
       ["name",                   "Name",         "text"],
       ["sector",                 "Sector",       "text"],
       ["signal_type",            "Signal",       "signal"],
+      ["days_since_trigger",     "D+",           "dplus"],
+      ["verdict",                "판정",         "verdictbadge"],
       ["grade",                  "Grade",        "grade"],
-      ["score",                  "Score",        "decimal"],
+      ["score",                  "Score",        "scorebar"],
+      ["score_3m",               "3M",           "decimal"],
       ["close",                  "Price",        "price"],
-      ["market_cap",             "Mkt Cap",      "marketcap"],
-      ["rs_spy_20d",             "RS 20D",       "pct"],
-      ["rs_spy_50d",             "RS 50D",       "pct"],
-      ["rs_sector_20d",          "Sector RS",    "pct"],
+      ["trigger_price",          "트리거가",     "money"],
+      ["ext_from_trigger",       "원점 대비",    "pctdist"],
       ["volume_ratio",           "Vol ×",        "decimal"],
-      ["accumulation_days_10d",  "매집 10d",     "number"],
-      ["close_to_50d_high",      "50D High",     "ratio"],
-      ["buy_price",              "Buy Price",    "money"],
-      ["buy_price_basis",        "Basis",        "text"],
       ["warnings",               "주의",         "warntext"],
     ];
 
@@ -1432,6 +2368,8 @@ INDEX_HTML = r"""
     let sortKey = "score";
     let sortAsc = false;
     let activeGrade = "all";
+    let activeVerdict = "all";
+    let newOnly = false;
 
     // Market cap button filter
     const mcapRanges = {
@@ -1473,11 +2411,11 @@ INDEX_HTML = r"""
       if (type === "pctdist")   return `${value >= 0 ? "+" : ""}${(value * 100).toFixed(1)}%`;
       if (type === "ratio")     return Number(value).toFixed(2);
       if (type === "decimal")   return Number(value).toFixed(3);
+      if (type === "score2")    return Number(value).toFixed(2);
       if (type === "number")    return Number.isInteger(Number(value)) ? String(Number(value)) : Number(value).toFixed(1);
       if (type === "money")     return `$${Number(value).toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 2 })}`;
       if (type === "price")     { const v = Number(value); return v < 1 ? `$${v.toFixed(3)}` : v < 10 ? `$${v.toFixed(2)}` : `$${Math.round(v).toLocaleString()}`; }
       if (type === "rank")      return value;
-      if (type === "stage")     return value || "";
       if (type === "flag")      return value ? "✓" : "";
       if (type === "vp") {
         const labels = { accumulation: "↑+V", weak_rally: "↑–V", distribution: "↓+V", dry_up: "↓–V" };
@@ -1497,14 +2435,16 @@ INDEX_HTML = r"""
     function setBusy(isBusy) {
       refreshButton.disabled = isBusy;
       runButton.disabled = isBusy;
-      refreshButton.textContent = isBusy ? "↻ Loading…" : "↻ Refresh";
-      runButton.textContent = isBusy ? "▶ Running…" : "▶ Run Screener";
+      refreshButton.textContent = isBusy ? "↻ 불러오는 중…" : "↻ 새로고침";
+      runButton.textContent = isBusy ? "▶ 실행 중…" : "▶ 스크리너 실행";
     }
 
     async function getJson(url, options = {}) {
       const response = await fetch(url, options);
-      const payload = await response.json();
-      if (!response.ok || payload.error) throw new Error(payload.error || `HTTP ${response.status}`);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload.error) {
+        throw new Error(payload.error || `서버 응답 오류 (HTTP ${response.status}) — 터미널 로그를 확인해 주세요.`);
+      }
       return payload;
     }
 
@@ -1554,16 +2494,16 @@ INDEX_HTML = r"""
         }
       }
 
-      // 3. 신호 구성 (서지 / 지속 매집 / 동시)
+      // 3. 신호 구성 (급증 / 지속 매집 / 동시)
       if (candidates > 0) {
         const cands  = data.candidates || [];
         const both   = cands.filter(r => r.signal_type === "surge+acc").length;
         const surgeN = cands.filter(r => r.signal_type === "surge").length;
         const accN   = cands.filter(r => r.signal_type === "acc").length;
         if (both > 0) {
-          items.push(`<span class="tag">최우선 신호</span>서지+매집 동시 신호 ${both}개 — 백테스트상 가장 강한 조합. 최우선 검토 대상.`);
+          items.push(`<span class="tag">최우선 신호</span>급증+매집 동시 신호 ${both}개 — 백테스트상 가장 강한 조합. 최우선 검토 대상.`);
         }
-        items.push(`<span class="tag neutral">신호 구성</span>당일 서지 ${surgeN}개 · 지속 매집 ${accN}개 · 동시 ${both}개 — 서지는 즉시성, 매집은 지속성 신호. ⚠ 라벨 종목은 고수익·고위험 구간이니 포지션 크기로 관리.`);
+        items.push(`<span class="tag neutral">신호 구성</span>당일 급증 ${surgeN}개 · 지속 매집 ${accN}개 · 동시 ${both}개 — 급증는 즉시성, 매집은 지속성 신호. ⚠ 라벨 종목은 고수익·고위험 구간이니 포지션 크기로 관리.`);
 
         // 4. 신고가 리더 (조정장에서는 역행 리더로 강조)
         const newHighs = cands.filter(r => (r.close_to_50d_high ?? 0) >= 0.99);
@@ -1588,105 +2528,12 @@ INDEX_HTML = r"""
       insightBar.style.display = "block";
     }
 
-    // --- Watchlist (실행 관점 그룹핑) ---
-    function buyDistance(r) {
-      if (!r.buy_price || !r.close) return null;
-      return r.close / r.buy_price - 1;
-    }
-
-    function buildComment(r, group) {
-      const rs20  = r.rs_spy_20d ?? 0;
-      const secRS = r.rs_sector_20d ?? 0;
-      const vol   = r.volume_ratio ?? 0;
-      const acc   = r.accumulation_days_10d ?? 0;
-      const ret20 = r.return_20d ?? 0;
-
-      const parts = [];
-
-      // 신호 설명
-      if (r.signal_type === "surge+acc") parts.push(`당일 거래량 ${vol.toFixed(1)}배 서지 + 10일 중 매집 ${acc}일 동시 신호`);
-      else if (r.signal_type === "surge") parts.push(`당일 거래량 ${vol.toFixed(1)}배 서지`);
-      else if (r.signal_type === "acc") parts.push(`10일 중 매집 ${acc}일 — 조용한 지속 매집`);
-
-      // 이벤트성 거래량 주의
-      if (r.signal_type !== "acc" && vol >= 2.5) parts.push("2.5배+ 이벤트성 거래량 — 실적/뉴스 반응일 수 있어 1~2일 소화 확인 권장");
-
-      // 매수기준가 대비 위치 (실행 판단)
-      const d = buyDistance(r);
-      if (d !== null) {
-        if (d <= 0.03) parts.push(`매수기준가 $${r.buy_price.toFixed(2)}(${r.buy_price_basis || "MA"}) 대비 ${d >= 0 ? "+" : ""}${(d*100).toFixed(1)}% — 진입 검토 구간`);
-        else if (d > 0.07) parts.push(`매수기준가 대비 +${(d*100).toFixed(1)}% 확장 — ${r.buy_price_basis || "MA"} 눌림 대기`);
-        else parts.push(`매수기준가 대비 +${(d*100).toFixed(1)}%`);
-      }
-
-      // RS 강도 (우선순위 근거)
-      if (rs20 >= 0.30) parts.push(`RS 20D ${(rs20*100).toFixed(0)}%로 강한 모멘텀`);
-      else parts.push(`RS 20D ${(rs20*100).toFixed(0)}%`);
-      if (secRS >= 0.15) parts.push(`섹터 RS ${(secRS*100).toFixed(0)}%`);
-
-      // MA 컨텍스트 (등급 근거)
-      if (r.grade === "A") parts.push("MA60 위+상승 (추세 컨텍스트 확보)");
-      else parts.push("MA 컨텍스트 약함 — 반등 성격, 리스크 관리 필수");
-
-      // 경고 라벨
-      if (r.warnings) parts.push(`⚠ ${r.warnings}`);
-      else if (ret20 >= 0.35) parts.push(`20일 수익률 ${(ret20*100).toFixed(0)}%로 다소 과열`);
-
-      return parts.join(". ") + ".";
-    }
-
-    function buildWatchlist(candidates) {
-      // 그룹은 실행 관점: 매수가 근처(≤+3%) / 확장(눌림 대기) / 후순위(저점수·분산 다수)
-      // 그룹 내 정렬은 스코어(RS 중심). 신호 종류는 각 행의 배지로 표시.
-      const sorted = [...candidates].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
-      const near = [], extended = [], low = [];
-      for (const r of sorted) {
-        const lowPriority = (r.score ?? 0) < 0.5 || (r.distribution_days_10d ?? 0) >= 5;
-        const d = buyDistance(r);
-        if (lowPriority)                 low.push(r);
-        else if (d !== null && d <= 0.03) near.push(r);
-        else                             extended.push(r);
-      }
-      return { near, extended, low };
-    }
-
-    function renderWatchlistGroup(title, cls, group, rows) {
-      const titleHtml = `<div class="wl-group-title ${cls}">${escapeHtml(title)}</div>`;
-      if (!rows.length) {
-        return `<div class="wl-group">${titleHtml}<div class="wl-empty">해당 종목 없음</div></div>`;
-      }
-      const sigMap = {
-        "surge+acc": ["서지+매집", "sig-both"],
-        "surge":     ["서지",      "sig-surge"],
-        "acc":       ["매집",      "sig-acc"],
-      };
-      const rowsHtml = rows.map(r => {
-        const gradeCls = r.grade === "B" ? " b" : "";
-        const sig = sigMap[r.signal_type];
-        const sigHtml = sig ? `<span class="wl-sig ${sig[1]}">${sig[0]}</span>` : "";
-        const d = buyDistance(r);
-        const distCls = d === null ? "" : d <= 0.03 ? " ok" : d > 0.07 ? " far" : "";
-        const distHtml = d === null ? "" : `<span class="wl-dist${distCls}" title="매수기준가 대비 현재가 위치">${d >= 0 ? "+" : ""}${(d*100).toFixed(1)}%</span>`;
-        return `<div class="wl-row">
-          <div class="wl-row-top">
-            <span class="wl-grade${gradeCls}">${escapeHtml(r.grade)}</span>
-            <span class="wl-ticker ticker-link" data-ticker="${escapeHtml(r.ticker)}" data-name="${escapeHtml(r.name||"")}">${escapeHtml(r.ticker)}</span>
-            ${sigHtml}
-            ${distHtml}
-            <span class="wl-name">${escapeHtml(r.name || "")}</span>
-          </div>
-          <div class="wl-comment">${escapeHtml(buildComment(r, group))}</div>
-        </div>`;
-      }).join("");
-      return `<div class="wl-group">${titleHtml}<div class="wl-rows">${rowsHtml}</div></div>`;
-    }
-
+    // --- Sector candidate analysis ---
     function renderClusterCards(candidates) {
       const el = document.getElementById("clusterCards");
       const bySector = {};
       candidates.forEach(r => { (bySector[r.sector] = bySector[r.sector] || []).push(r); });
       const clusters = Object.entries(bySector)
-        .filter(([, rows]) => rows.length >= 3)
         .sort((a, b) => b[1].length - a[1].length);
       if (!clusters.length) { el.style.display = "none"; el.innerHTML = ""; return; }
 
@@ -1696,20 +2543,20 @@ INDEX_HTML = r"""
         const nAcc   = rows.filter(r => r.signal_type === "acc").length + nBoth;
         const nHigh  = rows.filter(r => (r.close_to_50d_high ?? 0) >= 0.99).length;
         let note;
-        if (nAcc > 0 && nSurge > 0) note = "서지·매집 신호가 같은 업종에서 동시 발생 — 업종 단위 자금 유입 가능성";
-        else if (nAcc >= 3)         note = "조용한 매집 다수 — 기관성 수집이 진행 중일 가능성";
-        else                        note = "당일 서지 위주 — 이벤트성인지 지속성인지 확인 필요";
+        if (nAcc > 0 && nSurge > 0) note = "급증·매집 신호가 같은 업종에서 동시 발생 — 업종 단위 자금 유입 가능성";
+        else if (nAcc > 0)          note = "조용한 매집 중심 — 기관성 수집이 진행 중일 가능성";
+        else                        note = "당일 급증 중심 — 이벤트성인지 지속성인지 확인 필요";
         if (nHigh >= 2) note += ` · 50일 신고가 ${nHigh}개`;
         const chips = [...rows].sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
           .map(r => {
             const sigCls = r.signal_type === "surge+acc" ? " t-both" : r.signal_type === "acc" ? " t-acc" : "";
-            const sigTitle = r.signal_type === "surge+acc" ? "서지+매집 동시" : r.signal_type === "acc" ? "지속 매집" : "당일 서지";
+            const sigTitle = r.signal_type === "surge+acc" ? "급증+매집 동시" : r.signal_type === "acc" ? "지속 매집" : "당일 급증";
             return `<span class="cc-ticker${sigCls} ticker-link" title="${sigTitle}" data-ticker="${escapeHtml(r.ticker)}" data-name="${escapeHtml(r.name||"")}">${escapeHtml(r.ticker)}</span>`;
           })
           .join("");
         return `<div class="cluster-card">
           <div class="cc-title">${escapeHtml(sector)} <span class="cc-count">${rows.length}</span></div>
-          <div class="cc-meta"><span style="color:#0e5b45;font-weight:600">서지 ${nSurge}</span> · <span style="color:#3a4a9f;font-weight:600">매집 ${nAcc}</span>${nBoth ? ` · <span style="color:#fff;background:#0e5b45;border-radius:4px;padding:0 5px;font-weight:600">동시 ${nBoth}</span>` : ""}</div>
+          <div class="cc-meta"><span style="color:#0e5b45;font-weight:600">급증 ${nSurge}</span> · <span style="color:#3a4a9f;font-weight:600">매집 ${nAcc}</span>${nBoth ? ` · <span style="color:#fff;background:#0e5b45;border-radius:4px;padding:0 5px;font-weight:600">동시 ${nBoth}</span>` : ""}</div>
           <div class="cc-note">${escapeHtml(note)}</div>
           <div class="cc-tickers">${chips}</div>
         </div>`;
@@ -1718,27 +2565,17 @@ INDEX_HTML = r"""
       el.querySelectorAll(".ticker-link").forEach(link => {
         link.addEventListener("click", () => openChartModal(link.dataset.ticker, link.dataset.name));
       });
+      armTickerLinks(el);
     }
 
     function renderWatchlist(data) {
       const panel  = document.getElementById("watchlistPanel");
-      const groups = document.getElementById("watchlistGroups");
       const dateEl = document.getElementById("watchlistDate");
       const candidates = data.candidates || [];
       if (!candidates.length) { panel.style.display = "none"; return; }
 
-      const { near, extended, low } = buildWatchlist(candidates);
       dateEl.textContent = data.date || "";
       renderClusterCards(candidates);
-      groups.innerHTML = [
-        renderWatchlistGroup("매수가 근처 — 진입 검토",    "g-entry", "near",     near),
-        renderWatchlistGroup("확장 상태 — 눌림 대기",      "g-watch", "extended", extended),
-        renderWatchlistGroup("후순위 — 저점수·분산 다수",  "g-list",  "low",      low),
-      ].join("");
-
-      groups.querySelectorAll(".ticker-link").forEach(el => {
-        el.addEventListener("click", () => openChartModal(el.dataset.ticker, el.dataset.name));
-      });
 
       panel.style.display = "block";
     }
@@ -1746,6 +2583,8 @@ INDEX_HTML = r"""
     // --- Filtering & sorting ---
     function applyFilters() {
       let rows = allCandidates;
+      if (activeVerdict !== "all") rows = rows.filter(r => r.verdict === activeVerdict);
+      if (newOnly) rows = rows.filter(r => r.days_since_trigger === 0);
       if (activeGrade !== "all") rows = rows.filter(r => r.grade === activeGrade);
       const sector = sectorFilter.value;
       if (sector) rows = rows.filter(r => r.sector === sector);
@@ -1787,24 +2626,9 @@ INDEX_HTML = r"""
     }
 
     // --- Render ---
-    function renderMetrics(data) {
-      const items = [
-        ["Market",     data.market_state || "-",  data.date || ""],
-        ["Universe",   data.universe_count,        data.ticker_file || ""],
-        ["Evaluated",  data.evaluated_count,       `${data.missing_symbols?.length || 0} missing`],
-        ["Candidates", data.candidates_count,      `${data.grade_counts?.A || 0} A / ${data.grade_counts?.B || 0} B`],
-        ["Liquidity",  (() => { const v = data.config?.min_dollar_volume; if (v == null) return "-"; const m = v / 1e6; return m >= 1000 ? `$${(m/1000).toFixed(1)}B` : `$${Math.round(m)}M`; })(), "20D average"],
-      ];
-      metrics.innerHTML = items.map(([label, value, note]) => `
-        <div class="metric">
-          <div class="label">${escapeHtml(label)}</div>
-          <div class="value">${escapeHtml(value)}</div>
-          <div class="note">${escapeHtml(note)}</div>
-        </div>`).join("");
-    }
 
     function renderUniverse(data) {
-      universeLine.textContent = `US 1000 · ${data.universe_count ?? "-"} stocks`;
+      universeLine.textContent = `US 1000 · ${data.universe_count ?? "-"}종목`;
       const sectorTotals = data.sector_counts || {};
 
       // 섹터별 후보 수 집계 (allCandidates 전역 변수 사용)
@@ -1867,15 +2691,12 @@ INDEX_HTML = r"""
     }
 
     const funnelTooltips = {
-      "Universe":       "전체 입력 종목",
-      "Evaluated":      "데이터 충분한 종목",
-      "Liquidity":      "거래대금 기준 충족",
-      "RS 20D > 0":     "20일 SPY 대비 RS 양수 — 시장 수익률 상회",
-      "Close > MA60":   "종가가 MA60 위",
-      "MA60 Rising":    "MA60 상승 중",
-      "Trend Struct":   "MA20>MA60>MA120 정배열 또는 최근 5일 내 골든크로스(MA20↑MA60, MA60 상승 중)",
-      "Not Overheated": "과열·급등 없음",
-      "A Grade":        "최근 10일 누적일 ≥ 3 + 분산일 ≤ 1 (거래량 품질)",
+      "Universe":        "전체 입력 종목",
+      "Evaluated":       "데이터 충분한 종목",
+      "Liquidity":       "20일 평균 거래대금 ≥ $50M",
+      "RS 20D > 0":      "20일 SPY 대비 RS 양수 — 시장 수익률 상회",
+      "Volume Trigger (5일 창)":  "최근 5거래일 내 트리거(급증 1.5~5배+양봉 OR 매집 10일 중 6일+) — 트리거 후 5일간 관찰군 유지",
+      "구성: A등급 (참고)": "후보 중 MA60 위 + MA60 상승(추세형 A)의 비중 — 필터 단계가 아니라 구성 통계. B(반등형)는 탈락이 아니며 조정장에서는 B가 우수",
     };
 
     function renderFunnel(data) {
@@ -1901,10 +2722,12 @@ INDEX_HTML = r"""
       }).join("");
 
       const cfg = data.config || {};
+      const weightChip = scoreWeightText(cfg) || "가중치: 서버 설정 로드 대기";
       const params = [
-        `트리거: 당일 서지(거래량 ${cfg.surge_ratio_min ?? 1.5}~${cfg.surge_ratio_max ?? 5}배+양봉) OR 매집 ${cfg.accumulation_trigger_days ?? 6}일+/10일`,
+        `트리거: 당일 급증(거래량 ${cfg.surge_ratio_min ?? 1.5}~${cfg.surge_ratio_max ?? 5}배+양봉) OR 매집 ${cfg.accumulation_trigger_days ?? 6}일+/10일`,
         `필수: RS 20D > 0 · 유동성 통과 / 등급: A=MA60 위+상승, B=MA 약세`,
-        `스코어: RS20D 30% · RS50D 25% · 섹터RS 25% · 매집일 10% · 거래량추세 10%`,
+        `점수 v3: ${weightChip}`,
+        `지속창: 트리거 후 5거래일 유지 (D+ 컬럼) / 3M 점수: 12-1 모멘텀 기반 (참고용)`,
       ].map(t => `<span class="chip">${escapeHtml(t)}</span>`).join("");
 
       filterFunnel.innerHTML = stepsHtml +
@@ -1912,43 +2735,319 @@ INDEX_HTML = r"""
     }
 
 
+    // 현재 테이블에 표시되는 컬럼만 유지 — 제거된 컬럼의 상세 지표는 티커 검색/CSV에서 확인
     const columnTooltips = {
       "_rank":                  "점수 기준 순위",
-      "ticker":                 "종목 티커. 클릭하면 차트 팝업",
+      "ticker":                 "종목 티커. 클릭 또는 Enter로 차트 팝업",
       "name":                   "종목명",
       "sector":                 "GICS 섹터",
-      "grade":                  "MA 컨텍스트 등급\nA: MA60 위 + MA60 상승 (추세 속 신호)\nB: MA 약세 (반등 성격 — 리스크 관리 필수)",
-      "signal_type":            "주목 트리거 종류\n서지: 당일 거래량 1.5~5배 + 양봉\n매집: 최근 10일 중 매집일 6일 이상\n서지+매집: 둘 다 충족 — 백테스트상 가장 강한 신호",
+      "signal_type":            "주목 트리거 종류\n급증(unusual volume): 당일 거래량 1.5~5배 + 양봉\n매집(accumulation): 최근 10일 중 매집일 6일 이상\n급증+매집: 둘 다 충족 — 백테스트상 가장 강한 신호",
+      "days_since_trigger":     "트리거 발생 후 경과 거래일 (NEW = 오늘 신규)\n점은 5일 관찰창의 남은 일수 — 알파는 트리거 직후가 가장 신선\n5거래일이 지나면 관찰군에서 자동 소멸",
+      "verdict":                "코드 규칙이 결정론적으로 산출한 판정 (AI 아님)\n진입 검토: 규칙 통과 / 대기: 조건 충족 대기 / 스킵: 오늘은 제외\n사유는 상단 '오늘의 판단' 카드·행에 표시",
+      "grade":                  "MA 컨텍스트 등급\nA: MA60 위 + MA60 상승 (추세 속 신호)\nB: MA 약세 (반등 성격 — 조정장에서는 B가 우수)",
+      "score":                  "점수 v3 — RS 중심 percentile 가중합 (가중치는 서버 설정에서 로드)",
+      "score_3m":               "3개월(60일) 관점 느린 모멘텀 점수 (실험적)\n12-1 모멘텀 60% + 6-1 모멘텀 40% percentile\n생존 편향에 가장 민감한 지표 — 상대 순위 전용",
+      "close":                  "최근 종가",
+      "trigger_price":          "트리거가 — 거래량 트리거가 발생한 날의 종가 (신호 원점)",
+      "ext_from_trigger":       "원점 대비 확장도 = 현재가/트리거가 - 1\n신호 발생 시점 대비 얼마나 움직였는지 (참조용 — 예측력 없음이 백테스트로 확인됨)",
+      "_buy_delta":             "현재가 ÷ 매수기준가 - 1\n+5% 초과 = 기준선 위로 추격 구간 (⚠)\n음수 = 아직 기준선 아래 (지지 미확인)",
+      "volume_ratio":           "당일 거래량 ÷ 20일 평균 거래량\n1.5~5배 + 양봉이면 급증 트리거 충족",
       "warnings":               "경고 라벨 (배제 아님)\n과열: 단기 급등 구간 — 고수익·고위험, 포지션 크기로 관리\n거래량5x+: 어닝스 갭 의심 — 추격 주의\n분산N일: 최근 10일 내 분산일 다수 — 매도 압력",
-      "score":                  "RS 중심 percentile 가중합 (0~1)\nRS20D 30% + RS50D 25% + 섹터RS 25% + 매집일 10% + 거래량추세 10%\n백테스트 IC 검증 완료 — 높을수록 20일 초과수익 기대값 상승",
-      "volume_ratio":           "당일 거래량 ÷ 20일 평균 거래량\n1.5~5배 + 양봉이면 서지 트리거 충족",
-      "market_cap":             "시가총액",
-      "rs_spy_20d":             "최근 20일간 SPY 대비 상대강도 변화율\n양수 = 시장보다 더 많이 오름",
-      "rs_spy_50d":             "최근 50일간 SPY 대비 상대강도 변화율\n단기(20D)와 함께 보면 모멘텀 지속성 확인 가능",
-      "rs_sector_20d":          "최근 20일간 섹터 ETF 대비 상대강도 변화율\n섹터 안에서도 특히 강한 종목인지 확인",
-      "close_to_50d_high":      "현재 종가 ÷ 최근 50일 최고가\n1.0에 가까울수록 고점 근처에서 버티는 강한 종목",
-      "ma_aligned":             "MA20 > MA60 > MA120 정배열 여부\n✓ = 단·중·장기 이동평균선이 모두 우상향 순서로 정렬",
-      "golden_cross_recent":    "최근 5일 내 MA20이 MA60을 상향돌파 (MA60 상승 중)\n추세 전환 초기 신호 — 정배열은 아니어도 통과",
-      "vp_signal":              "당일 가격-거래량 4분면 신호\n↑+V: 가격 상승 + 거래량 평균 초과 (누적/Accumulation)\n↑–V: 가격 상승 + 거래량 평균 이하 (약한 상승)\n↓+V: 가격 하락 + 거래량 평균 초과 (분산/Distribution)\n↓–V: 가격 하락 + 거래량 평균 이하 (소강/Dry-up)",
-      "volume_strength":        "당일 거래량 강도 (20일 평균 대비)\n관심: 1.5x 이상 / 주목: 2.0x 이상 / 확신: 5.0x 이상",
-      "accumulation_days_10d":  "최근 10일 중 누적(가격↑+거래량↑) 일수\n3일 이상 + 분산 1일 이하면 거래량 품질 (A등급) 충족",
-      "distribution_days_10d":  "최근 10일 중 분산(가격↓+거래량↑) 일수\n2일 이상이면 매도 압력 — 거래량 품질 미충족 (B등급)",
-      "close_position":         "당일 범위(고가-저가) 내 종가 위치\n1.0 = 당일 최고가 마감, 0.0 = 최저가 마감",
-      "rsi_14":                 "14일 RSI (상대강도지수)\n70 이상 과매수, 30 이하 과매도 구간",
-      "buy_price":              "MA 눌림목 기준 매수기준가\nMA20 위에 있으면 MA20×1.01, 아니면 MA60×1.01",
-      "buy_price_basis":        "매수기준가 산출 기준 이동평균선 (MA20 / MA60)",
-      "base_stability":         "베이스 안정성 점수 (0~1)\n높을수록 최근 조용히 쉰 후 돌파 → 신뢰도 높음\n낮을수록 최근 오히려 변동성이 커진 상태",
-      "sector_etf_to_52w_high": "섹터 ETF의 52주 고점 대비 현재 위치\n0.95+: 섹터 자체가 신고점 근처 → 섹터 강세\n0.80 이하: 섹터 전체가 약세, 개별 종목 신뢰도 낮아짐",
     };
+
+    // --- 점수 가중치 단일 소스 (main.py SCORE_WEIGHTS_V3 → config.score_weights) ---
+    // 툴팁·퍼널 칩·필터링 방식·용어집이 전부 이 텍스트를 쓰므로 코드와 문서가 어긋날 수 없다.
+    const SCORE_FEATURE_LABELS = {
+      rs_spy_50d: "SPY RS 50D",
+      rs_spy_20d: "SPY RS 20D",
+      updown_vol_ratio_20d: "상승/하락일 거래량비 20D",
+      rs_sector_20d: "섹터 RS 20D",
+      rs_sector_50d: "섹터 RS 50D",
+      rs_spy_near_high: "RS선 고점 근접",
+    };
+
+    function scoreWeightText(cfg) {
+      if (!cfg?.score_weights) return null;
+      return Object.entries(cfg.score_weights)
+        .sort((a, b) => b[1] - a[1])
+        .map(([k, w]) => `${SCORE_FEATURE_LABELS[k] || k} ${Math.round(w * 100)}%`)
+        .join(" + ");
+    }
+
+    function applyScoreWeightDocs(cfg) {
+      const txt = scoreWeightText(cfg);
+      if (!txt) return;
+      const bonus = cfg.regime_fit_bonus != null ? Number(cfg.regime_fit_bonus).toFixed(2) : "0.10";
+      columnTooltips["score"] = `점수 v3 — percentile 가중합\n${txt}\n+ 국면-등급 정합 보너스 ${bonus} (상승장 A / 조정장 B)\n높을수록 20일 초과수익 기대값 상승`;
+      document.querySelectorAll("[data-score-weights]").forEach(el => { el.textContent = txt; });
+      document.querySelectorAll("[data-regime-bonus]").forEach(el => { el.textContent = bonus; });
+    }
+
+    const VERDICT_COLORS = { "진입 검토": "var(--accent)", "대기": "#8a6d1a", "스킵": "#767676" };
+    // --- 오늘의 판단 (히어로) ---
+    // 판정 그룹(후보 데이터) + AI 설명(commentary JSON)을 한 카드에 병합 렌더.
+    // 진입 검토 = 카드 / 대기 = 압축 행 / 스킵 = 접힌 목록. 테이블 필터와 무관하게 항상 전체 판정 표시.
+    const SIGNAL_LABELS = { "surge+acc": "급증+매집", "surge": "급증", "acc": "매집" };
+    const chartCache = new Map();
+
+    function loadMiniChart(ticker, wrapId, retId) {
+      const apply = data => {
+        const wrapEl = document.getElementById(wrapId);
+        const retEl = retId ? document.getElementById(retId) : null;
+        if (!wrapEl) return;
+        if (!data || data.error || !data.prices || data.prices.length < 2) {
+          if (retEl) retEl.textContent = "";
+          return;
+        }
+        const prices = data.prices;
+        const ret = (prices[prices.length - 1] - prices[0]) / prices[0] * 100;
+        if (retEl) {
+          retEl.textContent = (ret >= 0 ? "+" : "") + ret.toFixed(1) + "%";
+          retEl.className = "tr-inline-chart-return " + (ret >= 0 ? "pos" : "neg");
+        }
+        requestAnimationFrame(() => requestAnimationFrame(() => drawPriceChart(wrapEl, data, true)));
+      };
+      if (chartCache.has(ticker)) { apply(chartCache.get(ticker)); return; }
+      getJson(`/api/chart?symbol=${encodeURIComponent(ticker)}&days=63`)
+        .then(data => { chartCache.set(ticker, data); apply(data); })
+        .catch(() => apply(null));
+    }
+
+    function regimeFit(r) {
+      const state = window.__marketState || "";
+      return (state === "Confirmed Uptrend" && r.grade === "A")
+          || (state === "Market in Correction" && r.grade === "B");
+    }
+
+    function deltaClass(v) {
+      if (v === null || v === undefined) return "";
+      if (v > 0.05) return "d-hot";
+      if (v < 0) return "d-below";
+      return "d-pos";
+    }
+
+    function deltaText(v) {
+      if (v === null || v === undefined) return "–";
+      const pct = (v * 100).toFixed(1);
+      return `${v >= 0 ? "+" : ""}${pct}%${v > 0.05 ? " ⚠" : ""}`;
+    }
+
+    function entryPills(r) {
+      const pills = [];
+      if (r.days_since_trigger === 0 || r._diff === "new") pills.push(`<span class="ec-pill new">NEW</span>`);
+      else if (r.days_since_trigger !== null && r.days_since_trigger !== undefined) pills.push(`<span class="ec-pill">D+${escapeHtml(r.days_since_trigger)}</span>`);
+      if (r.grade) pills.push(`<span class="ec-pill grade-${String(r.grade).toLowerCase()}">${escapeHtml(r.grade)}등급${regimeFit(r) ? " · 국면 정합" : ""}</span>`);
+      const sigLabel = SIGNAL_LABELS[r.signal_type];
+      if (sigLabel) {
+        const sigCls = r.signal_type === "surge+acc" ? "sig-both" : r.signal_type === "acc" ? "sig-acc" : "sig-surge";
+        pills.push(`<span class="ec-pill ${sigCls}">${sigLabel}</span>`);
+      }
+      if (r.warnings) pills.push(`<span class="ec-pill warn">⚠ ${escapeHtml(r.warnings)}</span>`);
+      if (r.earnings_within_20d) pills.push(`<span class="ec-pill warn">어닝스 ${escapeHtml(r.next_earnings_date || "20일 내")}</span>`);
+      return pills.join("");
+    }
+
+    function entryCardHtml(r, comments) {
+      const note = comments[r.ticker] || "";
+      const noteHtml = note
+        ? `<div class="ec-note">${escapeHtml(note)}</div>`
+        : (r.verdict_reason ? `<div class="ec-note fallback">${escapeHtml(r.verdict_reason)}</div>` : "");
+      const fmt = (v, type) => v === null || v === undefined ? "–" : formatValue(v, type);
+      return `
+        <article class="entry-card">
+          <div class="ec-head">
+            <div class="ec-id">
+              <span class="ticker-link ec-ticker" data-ticker="${escapeHtml(r.ticker)}" data-name="${escapeHtml(r.name || "")}">${escapeHtml(r.ticker)}</span>
+              <span class="ec-name">${escapeHtml(r.name || "")}${r.sector ? ` · ${escapeHtml(r.sector)}` : ""}</span>
+            </div>
+            <div class="ec-score">${escapeHtml(fmt(r.score, "score2"))}<small>Score</small></div>
+          </div>
+          <div class="ec-pills">${entryPills(r)}</div>
+          <div>
+            <div class="tr-inline-chart-header">
+              <span class="tr-inline-chart-period">3M</span>
+              <span class="tr-inline-chart-return" id="ecRet-${escapeHtml(r.ticker)}"></span>
+            </div>
+            <div class="ec-chart" id="ecChart-${escapeHtml(r.ticker)}"></div>
+          </div>
+          <div class="ec-nums">
+            <div class="ec-num"><span>현재가</span><strong>${escapeHtml(fmt(r.close, "price"))}</strong></div>
+            <div class="ec-num"><span>트리거가</span><strong>${escapeHtml(fmt(r.trigger_price, "money"))}</strong></div>
+            <div class="ec-num"><span>원점 대비</span><strong class="${deltaClass(r.ext_from_trigger)}">${escapeHtml(deltaText(r.ext_from_trigger))}</strong></div>
+          </div>
+          ${noteHtml}
+        </article>`;
+    }
+
+    function waitRowHtml(r, comments) {
+      const reason = comments[r.ticker] || r.verdict_reason || "";
+      const dplus = r.days_since_trigger === 0 ? "NEW" :
+        (r.days_since_trigger !== null && r.days_since_trigger !== undefined ? `D+${r.days_since_trigger}` : "");
+      const fmt = (v, type) => v === null || v === undefined ? "–" : formatValue(v, type);
+      const nums = [
+        dplus,
+        `${fmt(r.close, "price")} / 트리거가 ${fmt(r.trigger_price, "money")} (${deltaText(r.ext_from_trigger)})`,
+      ].filter(Boolean).join(" · ");
+      return `
+        <div class="wait-row">
+          <div class="wr-id">
+            <span class="ticker-link wr-ticker" data-ticker="${escapeHtml(r.ticker)}" data-name="${escapeHtml(r.name || "")}">${escapeHtml(r.ticker)}</span>
+            <span class="wr-name">${escapeHtml(r.name || "")}</span>
+          </div>
+          <div class="wr-reason">${escapeHtml(reason)}</div>
+          <div class="wr-nums">${escapeHtml(nums)}</div>
+        </div>`;
+    }
+
+    function renderToday() {
+      const section = document.getElementById("todaySection");
+      const body = document.getElementById("todayBody");
+      const metaEl = document.getElementById("todayMeta");
+      const c = window.__commentary || null;
+      const cands = allCandidates.filter(r => r.verdict);
+      if (!cands.length) { section.style.display = "none"; return; }
+
+      const comments = {};
+      (c?.items || []).forEach(it => { comments[it.ticker] = it.comment; });
+
+      // AI 시장 코멘트는 시장 배너에 흡수
+      const aiEl = document.getElementById("marketBannerAI");
+      if (aiEl) {
+        if (c?.market_comment) {
+          // 개조식 브리핑: "라벨: 내용" 줄 → 라벨 열 + 본문 열의 행으로 렌더링
+          const rows = escapeHtml(c.market_comment).split("\n")
+            .map(l => l.trim()).filter(Boolean)
+            .map(l => {
+              const m = l.match(/^([가-힣A-Za-z ]{1,10}):\s*(.*)$/);
+              return m
+                ? `<div class="mb-ai-row"><span class="mb-ai-label">${m[1]}</span><span class="mb-ai-text">${m[2]}</span></div>`
+                : `<div class="mb-ai-row"><span class="mb-ai-label"></span><span class="mb-ai-text">${l}</span></div>`;
+            })
+            .join("");
+          aiEl.innerHTML = `<div class="mb-ai-head"><span class="mb-ai-tag">AI</span></div><div class="mb-ai-grid">${rows}</div>`;
+          aiEl.style.display = "";
+        } else {
+          aiEl.style.display = "none";
+        }
+      }
+
+      metaEl.textContent = c?.date
+        ? `${c.date} 데이터 · 판정은 백테스트 규칙이 결정, 설명은 AI가 하루 1회 작성 · 참고용`
+        : "판정은 백테스트 규칙이 결정 · AI 설명 대기 중";
+
+      const byVerdict = v => cands.filter(r => r.verdict === v).sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+      const entries = byVerdict("진입 검토");
+      const waits = byVerdict("대기");
+      const skips = byVerdict("스킵");
+
+      const label = (verdict, count, hint) =>
+        `<div class="today-group-label"><span class="tg-pill" style="background:${VERDICT_COLORS[verdict]}">${escapeHtml(verdict)} ${count}</span><span>${escapeHtml(hint)}</span></div>`;
+
+      let html = "";
+      if (entries.length) {
+        html += label("진입 검토", entries.length, "규칙 통과 — 점수순. 카드에서 바로 진입 방식·리스크 판단");
+        html += `<div class="entry-grid">${entries.map(r => entryCardHtml(r, comments)).join("")}</div>`;
+      } else {
+        html += `<div class="today-empty">오늘 진입 검토 종목 없음 — 대기 ${waits.length} · 스킵 ${skips.length}. 규칙(점수·국면·클러스터·모멘텀)을 통과하는 종목이 나오면 여기에 카드로 표시됩니다.</div>`;
+      }
+      if (waits.length) {
+        html += label("대기", waits.length, "조건 충족 대기 — 무엇을 기다리는지 사유 참조");
+        html += `<div class="wait-list">${waits.map(r => waitRowHtml(r, comments)).join("")}</div>`;
+      }
+      if (skips.length) {
+        html += `
+          <details class="skip-details">
+            <summary><span class="tg-pill" style="background:${VERDICT_COLORS["스킵"]}">스킵 ${skips.length}</span> 오늘은 지나가는 종목 — 사유 태그</summary>
+            <div class="skip-rows">${skips.map(r => `
+              <div class="skip-row">
+                <span class="ticker-link sr-ticker" data-ticker="${escapeHtml(r.ticker)}" data-name="${escapeHtml(r.name || "")}">${escapeHtml(r.ticker)}</span>
+                <span class="sr-reason">${escapeHtml(r.verdict_reason || "")}</span>
+              </div>`).join("")}</div>
+          </details>`;
+      }
+
+      body.innerHTML = html;
+      section.style.display = "";
+      armTickerLinks(section);
+      entries.forEach(r => loadMiniChart(r.ticker, `ecChart-${r.ticker}`, `ecRet-${r.ticker}`));
+    }
+    function renderMobileCandidateCards(rows) {
+      const signalLabels = {
+        "surge+acc": "급증+매집",
+        "surge": "급증",
+        "acc": "매집",
+      };
+      const diffLabels = { new: "NEW", up: "B→A", down: "A→B" };
+
+      return rows.map(row => {
+        const value = (key, type) => {
+          const raw = row[key];
+          return raw === null || raw === undefined || raw === "" ? "–" : formatValue(raw, type);
+        };
+        const volumeRatio = row.volume_ratio === null || row.volume_ratio === undefined
+          ? "–"
+          : `${formatValue(row.volume_ratio, "decimal")}×`;
+        const pills = [];
+        if (row._diff) pills.push(`<span class="mcc-pill new">${escapeHtml(diffLabels[row._diff] || row._diff)}</span>`);
+        if (row.grade) pills.push(`<span class="mcc-pill grade-${String(row.grade).toLowerCase()}">${escapeHtml(row.grade)}등급</span>`);
+        if (row.signal_type) pills.push(`<span class="mcc-pill">${escapeHtml(signalLabels[row.signal_type] || row.signal_type)}</span>`);
+        if (row.verdict) {
+          const verdictColor = VERDICT_COLORS[row.verdict];
+          const verdictStyle = verdictColor ? `style="border-color:${verdictColor};background:${verdictColor};color:#fff"` : "";
+          pills.push(`<span class="mcc-pill" ${verdictStyle}>${escapeHtml(row.verdict)}</span>`);
+        }
+        if (row.days_since_trigger === 0) pills.push(`<span class="mcc-pill new">D+ NEW</span>`);
+        else if (row.days_since_trigger !== null && row.days_since_trigger !== undefined) pills.push(`<span class="mcc-pill">D+${escapeHtml(row.days_since_trigger)}</span>`);
+        if (row.warnings) pills.push(`<span class="mcc-pill warn">⚠ ${escapeHtml(row.warnings)}</span>`);
+        // 판정 사유 인라인 — 모바일에는 title 툴팁이 없으므로 카드에 직접 노출
+        const reasonLine = row.verdict && row.verdict_reason
+          ? `<div style="margin-top:7px;font-size:11px;line-height:1.5;color:var(--muted);overflow-wrap:anywhere">${escapeHtml(row.verdict_reason)}</div>`
+          : "";
+
+        const metrics = [
+          ["3M", value("score_3m", "decimal")],
+          ["현재가", value("close", "price")],
+          ["트리거가", value("trigger_price", "money")],
+          ["원점 대비", deltaText(row.ext_from_trigger)],
+          ["RS 20D", value("rs_spy_20d", "pct")],
+          ["거래량", volumeRatio],
+        ].map(([label, metricValue]) => `
+          <div class="mcc-metric">
+            <span>${escapeHtml(label)}</span>
+            <strong>${escapeHtml(metricValue)}</strong>
+          </div>`).join("");
+
+        return `
+          <article class="mobile-candidate-card">
+            <div class="mcc-head">
+              <span class="mcc-rank">#${escapeHtml(row._rank ?? "–")}</span>
+              <div class="mcc-identity">
+                <span class="ticker ticker-link mcc-ticker" data-ticker="${escapeHtml(row.ticker || "")}" data-name="${escapeHtml(row.name || "")}" style="cursor:pointer;border-bottom:1px dotted var(--accent)">${escapeHtml(row.ticker || "–")}</span>
+                <span class="mcc-name">${escapeHtml(row.name || "")}</span>
+              </div>
+              <div class="mcc-score">${escapeHtml(value("score", "score2"))}<small>Score</small></div>
+            </div>
+            <div class="mcc-badges">${pills.join("")}</div>
+            ${reasonLine}
+            <div class="mcc-metrics">${metrics}</div>
+            <div class="mcc-foot">
+              <span>${escapeHtml(row.sector || "Unknown")}</span>
+              <span>${escapeHtml(value("market_cap", "marketcap"))}</span>
+            </div>
+          </article>`;
+      }).join("");
+    }
 
     function renderTable(rows) {
       if (!rows || rows.length === 0) {
-        candidateTable.innerHTML = '<div class="empty">No candidates</div>';
+        candidateTable.innerHTML = allCandidates.length
+          ? '<div class="empty">현재 필터 조건에 맞는 후보가 없습니다 — 판정·등급·섹터 필터를 넓혀 보세요.</div>'
+          : '<div class="empty">오늘 후보 없음 — 세 관문(유동성 · RS+ · 거래량 트리거)을 통과한 종목이 없습니다.</div>';
         return;
       }
       const head = columns.map(([key, label, type]) => {
         if (type === "diff") return `<th class="diff-badge-cell"></th>`;
-        const isNum = ["pct", "ratio", "decimal", "number", "marketcap", "price"].includes(type);
+        const isNum = ["pct", "pctdist", "ratio", "decimal", "score2", "scorebar", "number", "marketcap", "money", "price"].includes(type);
         const isCenter = ["flag", "vp", "vstr"].includes(type);
         let cls = isNum ? "num" : isCenter ? "center" : type === "rank" ? "rank" : "";
         let sortCls = key === sortKey ? (sortAsc ? " sort-asc" : " sort-desc") : "";
@@ -1973,16 +3072,26 @@ INDEX_HTML = r"""
             const grade = row[key] || "";
             return `<td><span class="badge${grade === "B" ? " b" : ""}">${escapeHtml(grade)}</span></td>`;
           }
-          if (type === "stage") {
-            const stage = row[key] || "";
-            const stageColors = {
-              "Early Breakout": "color:#0e5b45;background:#edf6f2;border-color:#b2d5c8",
-              "Trending":       "color:#666d63;background:#f0f0ec;border-color:var(--line)",
-              "Extended":       "color:var(--warn);background:#fef6e8;border-color:#f0d8a0",
-              "Watch":          "color:var(--muted);background:#fbfbfa;border-color:var(--line)",
-            };
-            const style = stageColors[stage] || "";
-            return `<td><span style="font-size:11px;padding:2px 7px;border-radius:999px;border:1px solid;white-space:nowrap;${style}">${escapeHtml(stage)}</span></td>`;
+          if (type === "dplus") {
+            const v = row[key];
+            if (v === null || v === undefined) return `<td class="center">–</td>`;
+            if (v === 0) return `<td class="center"><span style="font-size:10px;padding:2px 6px;border-radius:999px;background:var(--accent);color:#fff;font-weight:700">NEW</span></td>`;
+            const remaining = Math.max(0, 5 - v);
+            const segs = Array.from({ length: 5 }, (_, i) => `<span class="dp-seg${i < remaining ? " on" : ""}"></span>`).join("");
+            return `<td class="center" title="트리거 후 ${v}거래일 경과 — 관찰창 ${remaining}일 남음 (5일 지나면 자동 소멸, 알파는 트리거 직후가 가장 신선)"><span class="dp-wrap">D+${v}<span class="dp-meter">${segs}</span></span></td>`;
+          }
+          if (type === "scorebar") {
+            const v = row[key];
+            if (v === null || v === undefined) return `<td class="num">–</td>`;
+            const maxS = window.__scoreMax || 1;
+            const w = Math.max(3, Math.round((v / maxS) * 100));
+            return `<td class="num score-cell"><span class="score-bar"><span style="width:${w}%"></span></span>${Number(v).toFixed(2)}</td>`;
+          }
+          if (type === "verdictbadge") {
+            const v = row[key] || "";
+            const st = VERDICT_COLORS[v];
+            if (!st) return `<td></td>`;
+            return `<td title="${escapeHtml(row.verdict_reason || "")}"><span style="font-size:10px;padding:2px 7px;border-radius:999px;white-space:nowrap;background:${st};color:#fff">${escapeHtml(v)}</span></td>`;
           }
           if (type === "pctdist") {
             const v = row[key];
@@ -2003,8 +3112,8 @@ INDEX_HTML = r"""
           if (type === "signal") {
             const v = row[key] || "";
             const sigMap = {
-              "surge+acc": ["서지+매집", "color:#fff;background:#0e5b45;border-color:#0e5b45;font-weight:700"],
-              "surge":     ["서지",      "color:#0e5b45;background:#edf6f2;border-color:#b2d5c8"],
+              "surge+acc": ["급증+매집", "color:#fff;background:#0e5b45;border-color:#0e5b45;font-weight:700"],
+              "surge":     ["급증",      "color:#0e5b45;background:#edf6f2;border-color:#b2d5c8"],
               "acc":       ["매집",      "color:#3a4a9f;background:#f4f6fd;border-color:#c5cdf0"],
             };
             const entry = sigMap[v];
@@ -2046,7 +3155,14 @@ INDEX_HTML = r"""
         }).join("");
         return `<tr>${cells}</tr>`;
       }).join("");
-      candidateTable.innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+      const mobileCards = renderMobileCandidateCards(rows);
+      candidateTable.innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table><div class="mobile-candidate-list">${mobileCards}</div>`;
+      armTickerLinks(candidateTable);
+
+      const mobileSortValue = `${sortKey}:${sortAsc ? "asc" : "desc"}`;
+      if ([...mobileSort.options].some(option => option.value === mobileSortValue)) {
+        mobileSort.value = mobileSortValue;
+      }
 
       // bind sort click
       candidateTable.querySelectorAll("th[data-key]").forEach(th => {
@@ -2070,43 +3186,97 @@ INDEX_HTML = r"""
 
       const configs = {
         "Confirmed Uptrend": {
-          cls: "uptrend", icon: "●",
-          desc: "SPY·QQQ 모두 MA60 위 + 상승 중 — 신호 신뢰도가 가장 높은 구간 (백테스트: 후보 20일 초과수익 +1.7%, 승률 52%). 정상 매수 환경.",
+          cls: "uptrend", badge: "▲ 상승 추세",
+          desc: "3축(추세·시장폭·변동성) 종합 상승 — 신호 신뢰도가 가장 높은 구간, A등급(추세형) 우선. 정상 매수 환경.",
         },
         "Uptrend Under Pressure": {
-          cls: "pressure", icon: "◐",
-          desc: "지수 일부 약화 중 — 추세 훼손 초기. 신호 신뢰도 중간, 포지션 크기 축소 권장.",
+          cls: "pressure", badge: "◆ 압박",
+          desc: "3축 신호 혼재 — 추세 훼손 초기 또는 회복 중. 포지션 크기 축소 권장.",
         },
         "Market in Correction": {
-          cls: "correction", icon: "○",
-          desc: "SPY 또는 QQQ가 MA60 아래 — 조정장으로 기대 엣지가 얇은 구간. 포지션은 평소보다 작게. 단, 이 장에서 신고가를 만드는 종목은 조정 종료 후 주도주가 될 확률이 높은 리더 후보.",
+          cls: "correction", badge: "▼ 조정장",
+          desc: "3축 종합 하락 — 기대 엣지가 얇은 구간, B등급(반등형) 우선. 포지션은 평소보다 작게. 이 장의 신고가 종목은 조정 종료 후 주도주 후보.",
         },
       };
-      const cfg = configs[state] || { cls: "", icon: "?", desc: state };
+      const cfg = configs[state] || { cls: "", badge: "", desc: state };
+      const rd = data.regime_detail;
+      let axisLine = "";
+      if (rd) {
+        const trendTxt = rd.trend > 0 ? "상승 ↑" : rd.trend < 0 ? "이탈 ↓" : "중립 –";
+        const breadthTxt = rd.breadth != null ? `${(rd.breadth*100).toFixed(0)}%` : "–";
+        const vixTxt = rd.vix_ratio != null ? `${rd.vix_ratio.toFixed(2)} ${rd.vix_ratio < 0.95 ? "(콘탱고·평온)" : rd.vix_ratio > 1.0 ? "(백워데이션·공포)" : "(중립)"}` : "–";
+        axisLine = ` · 추세 ${trendTxt} | 시장폭 ${breadthTxt} (MA60 위 종목 비율) | VIX구조 ${vixTxt}`;
+      }
+      cfg.desc = cfg.desc + axisLine;
 
       banner.className = `market-banner ${cfg.cls}`;
-      document.getElementById("marketBannerIcon").textContent  = cfg.icon;
       document.getElementById("marketBannerState").textContent = state;
+      const badgeEl = document.getElementById("marketBannerBadge");
+      badgeEl.textContent = cfg.badge;
+      badgeEl.style.display = cfg.badge ? "" : "none";
       document.getElementById("marketBannerDesc").textContent  = cfg.desc;
       banner.style.display = "";
     }
 
+    // --- HOME (소개) 뷰: 라이브 숫자 채우기 ---
+    function renderHome(data) {
+      const set = (id, v) => {
+        const el = document.getElementById(id);
+        if (el && v != null && v !== "") el.textContent = v;
+      };
+      const byLabel = {};
+      (data.filter_steps || []).forEach(s => { byLabel[s.label] = s.count; });
+      set("hmUniverse", data.universe_count != null ? Number(data.universe_count).toLocaleString() : null);
+      set("hmGate1", byLabel["Liquidity"] != null ? `통과 ${byLabel["Liquidity"]}` : null);
+      set("hmGate2", byLabel["RS 20D > 0"] != null ? `통과 ${byLabel["RS 20D > 0"]}` : null);
+      // 서버 라벨은 "Volume Trigger (5일 창)" — 접두사 매칭으로 라벨 표기 변경에 견디게
+      const triggerStep = (data.filter_steps || []).find(s => String(s.label).startsWith("Volume Trigger"));
+      set("hmGate3", triggerStep ? `통과 ${triggerStep.count}` : null);
+      set("hmCands", data.candidates_count);
+      if (data.date) set("hmCandsDate", `오늘의 후보 (${data.date} 기준)`);
+      const nowUp = document.getElementById("hmNowUp");
+      const nowDown = document.getElementById("hmNowDown");
+      if (nowUp && nowDown) {
+        nowUp.style.display = data.market_state === "Confirmed Uptrend" ? "inline-block" : "none";
+        nowDown.style.display = data.market_state === "Market in Correction" ? "inline-block" : "none";
+      }
+    }
+
     function renderResult(data) {
+      applyScoreWeightDocs(data.config || {});
+      renderHome(data);
       renderMarketBanner(data);
-      renderMetrics(data);
       renderFunnel(data);
       renderInsight(data);
       renderWatchlist(data);
       allCandidates = data.candidates || [];
+      window.__commentary = data.commentary || null;
+      window.__marketState = data.market_state || "";
       // score 내림차순으로 순위 부여 (필터/정렬과 무관하게 고정)
       [...allCandidates]
         .sort((a, b) => (b.score ?? -1) - (a.score ?? -1))
         .forEach((r, i) => { r._rank = i + 1; });
+      window.__scoreMax = Math.max(...allCandidates.map(r => r.score ?? 0), 0) || 1;
+      // 트리거가 대비 확장도 — CSV에 없으면(구 파일) 프론트에서 파생
+      allCandidates.forEach(r => {
+        if (r.ext_from_trigger == null && r.close != null && r.trigger_price != null && r.trigger_price > 0) {
+          r.ext_from_trigger = r.close / r.trigger_price - 1;
+        }
+      });
       renderUniverse(data);  // allCandidates 세팅 후 호출해야 섹터 적중률 계산 가능
       populateSectorOptions();
       resetMcapFromData();
+      renderToday();
       applyFilters();
-      const srcLabel = data.source === "latest" ? "파일 로드" : data.from_cache ? "캐시 사용" : "신규 다운로드";
+      // 원본 CSV 링크 — 대시보드 밖에서 전체 지표를 볼 수 있는 탈출구
+      const csvLinks = document.getElementById("csvLinks");
+      const links = [];
+      if (data.candidates_csv) links.push(`<a href="${escapeHtml(data.candidates_csv)}" download>후보 CSV</a>`);
+      if (data.universe_csv) links.push(`<a href="${escapeHtml(data.universe_csv)}" download>전체 CSV</a>`);
+      csvLinks.innerHTML = links.join(" · ");
+      const staleN = (data.stale_symbols || []).length;
+      const srcLabel = (data.source === "latest" ? "파일 로드" : data.from_cache ? "캐시 사용" : "신규 다운로드")
+        + (staleN ? ` · ⚠ ${staleN}종목 전일 데이터` : "");
       const runLabel = data.last_run_at ? `마지막 실행 ${escapeHtml(data.last_run_at)}` : "";
       runMeta.textContent = [srcLabel, runLabel].filter(Boolean).join(" · ");
     }
@@ -2115,7 +3285,7 @@ INDEX_HTML = r"""
     const filterLabels = {
       "liquidity_ok":            "유동성",
       "rs_positive":             "RS 20D > 0 (필수)",
-      "surge_today":             "당일 서지 (1.5~5배+양봉)",
+      "surge_today":             "당일 급증 (1.5~5배+양봉)",
       "sustained_accumulation":  "지속 매집 (10일 중 6일+)",
       "passed_hard_filters":     "최종 후보",
       "above_ma60":              "MA60 위 [등급]",
@@ -2126,9 +3296,9 @@ INDEX_HTML = r"""
     const filterFailReasons = {
       "liquidity_ok":            (m) => `20일 평균 거래대금이 기준 미달 — 유동성이 낮아 제외됩니다.`,
       "rs_positive":             (m) => `최근 20일간 SPY 대비 상대강도(RS)가 마이너스 — 시장 전체보다 약합니다. RS+는 필수 조건입니다.`,
-      "surge_today":             (m) => `당일 거래량 서지 없음 — 20일 평균 대비 1.5~5배 + 양봉 조건 미충족 (지속 매집 충족 시에는 통과 가능).`,
-      "sustained_accumulation":  (m) => `지속 매집 미충족 — 최근 10일 중 매집일(가격↑+거래량↑)이 6일 미만 (당일 서지 충족 시에는 통과 가능).`,
-      "passed_hard_filters":     (m) => `유동성 · RS+ · 거래량 트리거(당일 서지 OR 지속 매집) 중 하나 이상 미충족 — 후보군에 포함되지 않았습니다.`,
+      "surge_today":             (m) => `당일 거래량 급증 없음 — 20일 평균 대비 1.5~5배 + 양봉 조건 미충족 (지속 매집 충족 시에는 통과 가능).`,
+      "sustained_accumulation":  (m) => `지속 매집 미충족 — 최근 10일 중 매집일(가격↑+거래량↑)이 6일 미만 (당일 급증 충족 시에는 통과 가능).`,
+      "passed_hard_filters":     (m) => `유동성 · RS+ · 거래량 트리거(당일 급증 OR 지속 매집) 중 하나 이상 미충족 — 후보군에 포함되지 않았습니다.`,
       "above_ma60":              (m) => `주가가 MA60 아래 — 배제 사유는 아니지만 B등급(MA 약세, 반등 성격)으로 분류됩니다.`,
       "ma60_rising":             (m) => `MA60이 10일 전보다 낮음 — 배제 사유는 아니지만 B등급(MA 약세)으로 분류됩니다.`,
       "not_overheated":          (m) => `과열 구간 — MA20 대비 125% 초과, 5일 40%+, 또는 당일 25%+ 급등. 배제하지 않지만 ⚠과열 라벨이 붙습니다 (고수익·고위험 구간, 포지션 크기로 관리).`,
@@ -2230,7 +3400,7 @@ INDEX_HTML = r"""
           } else {
             retEl.textContent = "";
           }
-          requestAnimationFrame(() => requestAnimationFrame(() => drawChartSmall(wrapEl, data.dates, prices)));
+          requestAnimationFrame(() => requestAnimationFrame(() => drawPriceChart(wrapEl, data, true)));
         }).catch(() => { retEl.textContent = ""; });
       });
     }
@@ -2262,6 +3432,30 @@ INDEX_HTML = r"""
 
     sectorFilter.addEventListener("change", applyFilters);
 
+    // --- Verdict segment & 오늘 신규만 toggle ---
+    document.querySelectorAll(".vd-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".vd-btn").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        activeVerdict = btn.dataset.verdict;
+        applyFilters();
+      });
+    });
+
+    const newOnlyBtn = document.getElementById("newOnlyBtn");
+    newOnlyBtn.addEventListener("click", () => {
+      newOnly = !newOnly;
+      newOnlyBtn.setAttribute("aria-pressed", String(newOnly));
+      applyFilters();
+    });
+
+    mobileSort.addEventListener("change", () => {
+      const [key, direction] = mobileSort.value.split(":");
+      sortKey = key;
+      sortAsc = direction === "asc";
+      applyFilters();
+    });
+
     // --- Chart popup ---
     const chartOverlay   = document.getElementById("chartOverlay");
     const chartModalClose = document.getElementById("chartModalClose");
@@ -2274,87 +3468,84 @@ INDEX_HTML = r"""
     chartOverlay.addEventListener("click", e => { if (e.target === chartOverlay) closeChartModal(); });
     document.addEventListener("keydown", e => { if (e.key === "Escape") closeChartModal(); });
 
-    function drawChartSmall(wrapEl, dates, prices) {
-      const W = wrapEl.clientWidth || 150;
-      const H = wrapEl.clientHeight || 80;
-      const pad = { top: 4, right: 6, bottom: 14, left: 28 };
+    // 가격 라인 + 거래량 바(하단 밴드) + 매수기준가 점선 + 트리거일 마커를 한 SVG에 렌더.
+    // 거래량 스크리너의 근거(급증·매집)를 차트에서 직접 검증할 수 있게 한다. 색은 기존 토큰만 사용.
+    function drawPriceChart(wrapEl, data, small) {
+      const dates = data.dates || [];
+      const prices = data.prices || [];
+      if (prices.length < 2) { wrapEl.innerHTML = ""; return; }
+      const W = wrapEl.clientWidth || (small ? 150 : 380);
+      const H = small ? (wrapEl.clientHeight || 80) : 130;
+      const pad = small
+        ? { top: 4, right: 6, bottom: 14, left: 28 }
+        : { top: 8, right: 10, bottom: 24, left: 40 };
       const iW = W - pad.left - pad.right;
       const iH = H - pad.top - pad.bottom;
 
-      const minP = Math.min(...prices);
-      const maxP = Math.max(...prices);
+      const volumes = Array.isArray(data.volumes) && data.volumes.length === prices.length ? data.volumes : null;
+      const volH = volumes ? Math.round(iH * 0.22) : 0;
+      const priceH = volumes ? iH - volH - 3 : iH;
+
+      let minP = Math.min(...prices);
+      let maxP = Math.max(...prices);
+      const buyPrice = typeof data.trigger_price === "number" ? data.trigger_price : null;
+      const showBuy = buyPrice !== null && buyPrice >= minP * 0.92 && buyPrice <= maxP * 1.08;
+      if (showBuy) { minP = Math.min(minP, buyPrice); maxP = Math.max(maxP, buyPrice); }
       const range = maxP - minP || 1;
 
       const x = i => pad.left + (i / (prices.length - 1)) * iW;
-      const y = v => pad.top + iH - ((v - minP) / range) * iH;
+      const y = v => pad.top + priceH - ((v - minP) / range) * priceH;
 
       const pts = prices.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
-      const areaBottom = pad.top + iH;
+      const areaBottom = pad.top + priceH;
       const areaPath = `M${x(0).toFixed(1)},${areaBottom} ` +
         prices.map((v, i) => `L${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ") +
-        ` L${x(prices.length-1).toFixed(1)},${areaBottom} Z`;
-
-      const isUp = prices[prices.length - 1] >= prices[0];
-      const lineColor = isUp ? "var(--accent)" : "var(--danger)";
-      const gradId = "areaGradS_" + Math.random().toString(36).slice(2);
-
-      const yTicks = [minP, maxP].map(v => ({ v, yPx: y(v).toFixed(1) }));
-      const xTicks = [0, prices.length - 1].map(i => ({
-        label: dates[i] ? dates[i].slice(5) : "",
-        xPx: x(i).toFixed(1),
-      }));
-
-      wrapEl.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
-        <defs>
-          <linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="${lineColor}" stop-opacity="0.18"/>
-            <stop offset="100%" stop-color="${lineColor}" stop-opacity="0"/>
-          </linearGradient>
-        </defs>
-        <path d="${areaPath}" fill="url(#${gradId})"/>
-        <polyline points="${pts}" fill="none" stroke="${lineColor}" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/>
-        ${yTicks.map(t => `
-          <line x1="${pad.left}" y1="${t.yPx}" x2="${pad.left + iW}" y2="${t.yPx}" stroke="var(--line)" stroke-width="0.8"/>
-          <text x="${pad.left - 4}" y="${t.yPx}" text-anchor="end" dominant-baseline="middle" fill="var(--muted)" font-size="8" font-family="DM Mono,monospace">$${t.v >= 1000 ? (t.v/1000).toFixed(1)+"K" : t.v.toFixed(0)}</text>
-        `).join("")}
-        ${xTicks.map(t => `
-          <text x="${t.xPx}" y="${pad.top + iH + 10}" text-anchor="middle" fill="var(--muted)" font-size="8" font-family="DM Mono,monospace">${t.label}</text>
-        `).join("")}
-      </svg>`;
-    }
-
-    function drawChart(wrapEl, dates, prices) {
-      const W = wrapEl.clientWidth || 380;
-      const H = 130;
-      const pad = { top: 8, right: 10, bottom: 24, left: 40 };
-      const iW = W - pad.left - pad.right;
-      const iH = H - pad.top - pad.bottom;
-
-      const minP = Math.min(...prices);
-      const maxP = Math.max(...prices);
-      const range = maxP - minP || 1;
-
-      const x = i => pad.left + (i / (prices.length - 1)) * iW;
-      const y = v => pad.top + iH - ((v - minP) / range) * iH;
-
-      const pts = prices.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
-      const areaBottom = pad.top + iH;
-      const areaPath = `M${x(0).toFixed(1)},${areaBottom} ` +
-        prices.map((v, i) => `L${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ") +
-        ` L${x(prices.length-1).toFixed(1)},${areaBottom} Z`;
+        ` L${x(prices.length - 1).toFixed(1)},${areaBottom} Z`;
 
       const isUp = prices[prices.length - 1] >= prices[0];
       const lineColor = isUp ? "var(--accent)" : "var(--danger)";
       const gradId = "areaGrad_" + Math.random().toString(36).slice(2);
+      const fs = small ? 8 : 9;
+      const fmtP = v => `$${v >= 1000 ? (v / 1000).toFixed(1) + "K" : v.toFixed(0)}`;
 
-      const yTicks = [minP, minP + range * 0.5, maxP].map(v => ({
-        v, yPx: y(v).toFixed(1)
-      }));
-      const xTickIdxs = [0, Math.floor((prices.length - 1) / 2), prices.length - 1];
+      const yTicks = (small ? [minP, maxP] : [minP, minP + range * 0.5, maxP])
+        .map(v => ({ v, yPx: y(v).toFixed(1) }));
+      const xTickIdxs = small ? [0, prices.length - 1] : [0, Math.floor((prices.length - 1) / 2), prices.length - 1];
       const xTicks = xTickIdxs.map(i => ({
         label: dates[i] ? dates[i].slice(5) : "",
         xPx: x(i).toFixed(1),
       }));
+
+      // 거래량 밴드 — 문맥용 보조 지표라 무채색(라인 토큰), 축 라벨 없음
+      let volSvg = "";
+      if (volumes) {
+        const maxV = Math.max(...volumes) || 1;
+        const barW = Math.max(1, (iW / prices.length) * 0.65);
+        const volTop = pad.top + priceH + 3;
+        volSvg = volumes.map((v, i) => {
+          const h = Math.max(0.5, (v / maxV) * volH);
+          return `<rect x="${(x(i) - barW / 2).toFixed(1)}" y="${(volTop + volH - h).toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" fill="var(--line)"/>`;
+        }).join("");
+      }
+
+      // 매수기준가 점선 — 눌림목 진입 기준선 (범위 밖이면 생략)
+      let buySvg = "";
+      if (showBuy) {
+        const by = y(buyPrice).toFixed(1);
+        const label = small ? "" :
+          `<text x="${pad.left + 3}" y="${by}" text-anchor="start" dominant-baseline="text-after-edge" fill="var(--muted)" font-size="${fs}" font-family="DM Mono,monospace">트리거 ${fmtP(buyPrice)}</text>`;
+        buySvg = `<line x1="${pad.left}" y1="${by}" x2="${pad.left + iW}" y2="${by}" stroke="var(--muted)" stroke-width="1" stroke-dasharray="4 3"/>${label}`;
+      }
+
+      // 트리거일 마커 — 마지막 거래일에서 days_since_trigger만큼 거슬러 올라간 지점
+      let trigSvg = "";
+      const dst = typeof data.days_since_trigger === "number" ? Math.round(data.days_since_trigger) : null;
+      if (dst !== null && dst >= 0) {
+        const idx = prices.length - 1 - dst;
+        if (idx >= 0) {
+          trigSvg = `<circle cx="${x(idx).toFixed(1)}" cy="${y(prices[idx]).toFixed(1)}" r="${small ? 2.6 : 3.5}" fill="${lineColor}" stroke="#fff" stroke-width="1.5"><title>거래량 트리거 발생일 (D+${dst})</title></circle>`;
+        }
+      }
 
       wrapEl.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
         <defs>
@@ -2363,14 +3554,17 @@ INDEX_HTML = r"""
             <stop offset="100%" stop-color="${lineColor}" stop-opacity="0"/>
           </linearGradient>
         </defs>
+        ${volSvg}
         <path d="${areaPath}" fill="url(#${gradId})"/>
-        <polyline points="${pts}" fill="none" stroke="${lineColor}" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
         ${yTicks.map(t => `
-          <line x1="${pad.left}" y1="${t.yPx}" x2="${pad.left + iW}" y2="${t.yPx}" stroke="var(--line)" stroke-width="1"/>
-          <text x="${pad.left - 5}" y="${t.yPx}" text-anchor="end" dominant-baseline="middle" fill="var(--muted)" font-size="9" font-family="DM Mono,monospace">$${t.v >= 1000 ? (t.v/1000).toFixed(1)+"K" : t.v.toFixed(0)}</text>
+          <line x1="${pad.left}" y1="${t.yPx}" x2="${pad.left + iW}" y2="${t.yPx}" stroke="var(--line)" stroke-width="${small ? 0.8 : 1}"/>
+          <text x="${pad.left - (small ? 4 : 5)}" y="${t.yPx}" text-anchor="end" dominant-baseline="middle" fill="var(--muted)" font-size="${fs}" font-family="DM Mono,monospace">${fmtP(t.v)}</text>
         `).join("")}
+        ${buySvg}
+        <polyline points="${pts}" fill="none" stroke="${lineColor}" stroke-width="${small ? 1.4 : 1.6}" stroke-linejoin="round" stroke-linecap="round"/>
+        ${trigSvg}
         ${xTicks.map(t => `
-          <text x="${t.xPx}" y="${pad.top + iH + 14}" text-anchor="middle" fill="var(--muted)" font-size="9" font-family="DM Mono,monospace">${t.label}</text>
+          <text x="${t.xPx}" y="${pad.top + iH + (small ? 10 : 14)}" text-anchor="middle" fill="var(--muted)" font-size="${fs}" font-family="DM Mono,monospace">${t.label}</text>
         `).join("")}
       </svg>`;
     }
@@ -2396,7 +3590,7 @@ INDEX_HTML = r"""
         } else {
           retEl.textContent = "";
         }
-        drawChart(wrapEl, data.dates, prices);
+        drawPriceChart(wrapEl, data, false);
       } catch (err) {
         retEl.textContent = err.message;
       }
@@ -2413,9 +3607,29 @@ INDEX_HTML = r"""
     }
 
     // Delegate ticker-link clicks from the table
-    candidateTable.addEventListener("click", e => {
-      const link = e.target.closest(".ticker-link");
+    function delegateTickerClicks(el) {
+      el.addEventListener("click", e => {
+        const link = e.target.closest(".ticker-link");
+        if (!link) return;
+        openChartModal(link.dataset.ticker, link.dataset.name);
+      });
+    }
+    delegateTickerClicks(candidateTable);
+    delegateTickerClicks(document.getElementById("todaySection"));
+
+    // 키보드 접근 — 티커 링크는 span이므로 tabindex/role을 렌더 후 부여하고 Enter/Space로 열기
+    function armTickerLinks(scope) {
+      (scope || document).querySelectorAll(".ticker-link").forEach(l => {
+        l.tabIndex = 0;
+        l.setAttribute("role", "button");
+        l.setAttribute("aria-label", `${l.dataset.ticker} 차트 열기`);
+      });
+    }
+    document.addEventListener("keydown", e => {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      const link = e.target.closest?.(".ticker-link");
       if (!link) return;
+      e.preventDefault();
       openChartModal(link.dataset.ticker, link.dataset.name);
     });
 
@@ -2423,6 +3637,7 @@ INDEX_HTML = r"""
     async function loadUniverse() {
       try {
         const data = await getJson("/api/universe");
+        applyScoreWeightDocs(data.config || {});
         renderUniverse(data);
       } catch (error) {
         statusText.innerHTML = `<span class="error">${escapeHtml(error.message)}</span>`;
@@ -2434,7 +3649,7 @@ INDEX_HTML = r"""
 
     function renderDiff(diff) {
       diffData = diff;
-      const section = document.getElementById("diffSection");
+      const section = document.getElementById("diffTop");
       if (!diff || (!diff.new_entries.length && !diff.dropped.length && !diff.upgraded.length && !diff.downgraded.length)) {
         section.style.display = "none";
         return;
@@ -2467,6 +3682,7 @@ INDEX_HTML = r"""
         else if (downgradedSet.has(r.ticker)) r._diff = "down";
         else r._diff = null;
       });
+      renderToday();
       applyFilters();
     }
 
@@ -2474,7 +3690,25 @@ INDEX_HTML = r"""
       try {
         const diff = await getJson("/api/diff");
         renderDiff(diff);
-      } catch (_) { /* diff 없으면 조용히 무시 */ }
+      } catch (err) {
+        // 비교 실패를 "변경 없음"으로 오독하지 않도록 상단에 명시
+        const section = document.getElementById("diffTop");
+        section.style.display = "";
+        document.getElementById("diffDateLabel").textContent = "";
+        document.getElementById("diffChips").innerHTML =
+          `<span class="diff-chip" style="color:var(--warn)">전일 대비 비교 실패 — ${escapeHtml(err.message)}</span>`;
+        document.getElementById("diffTickers").innerHTML = "";
+      }
+    }
+
+    // 데이터 날짜가 오늘로부터 4일 이상 지났으면 스테일 경고 (주말·시차로 1~3일 차이는 정상)
+    function staleWarning(dateStr) {
+      if (!dateStr) return "";
+      const dataDate = new Date(dateStr + "T00:00:00");
+      if (Number.isNaN(dataDate.getTime())) return "";
+      const gapDays = Math.floor((Date.now() - dataDate.getTime()) / 86400000);
+      if (gapDays < 4) return "";
+      return ` <span style="color:var(--warn);font-weight:700">⚠ ${gapDays}일 전 데이터 — 자동 실행 확인 필요</span>`;
     }
 
     async function loadLatest() {
@@ -2482,7 +3716,7 @@ INDEX_HTML = r"""
         const data = await getJson("/api/latest");
         if (data.has_result) {
           renderResult(data);
-          statusText.innerHTML = `Latest result · <strong>${escapeHtml(data.date || "")}</strong>`;
+          statusText.innerHTML = `최신 결과 · <strong>${escapeHtml(data.date || "")}</strong>${staleWarning(data.date)}`;
           await loadDiff();
         }
       } catch (error) {
@@ -2492,13 +3726,13 @@ INDEX_HTML = r"""
 
     async function refresh() {
       setBusy(true);
-      statusText.innerHTML = "Loading latest result…";
+      statusText.innerHTML = "최신 결과 불러오는 중…";
       runMeta.textContent = "";
       try {
         const data = await getJson("/api/latest");
         if (data.has_result) {
           renderResult(data);
-          statusText.innerHTML = `Latest result · <strong>${escapeHtml(data.date || "")}</strong>`;
+          statusText.innerHTML = `최신 결과 · <strong>${escapeHtml(data.date || "")}</strong>${staleWarning(data.date)}`;
           await loadDiff();
         } else {
           statusText.innerHTML = `<span class="error">결과 없음 — main.py를 먼저 실행해 주세요.</span>`;
@@ -2531,8 +3765,23 @@ INDEX_HTML = r"""
       }
     }
 
-    refreshButton.addEventListener("click", refresh);
-    runButton.addEventListener("click", runScreener);
+    // --- HOME / 대시보드 탭 전환 (마지막 선택 기억, 첫 방문은 HOME) ---
+    const homeViewEl = document.getElementById("homeView");
+    const dashboardViewEl = document.getElementById("dashboardView");
+    function setView(name) {
+      const isHome = name === "home";
+      homeViewEl.hidden = !isHome;
+      dashboardViewEl.hidden = isHome;
+      document.querySelectorAll(".vt-btn").forEach(b => b.classList.toggle("active", b.dataset.view === name));
+      try { localStorage.setItem("apexView", name); } catch (_) { /* 무시 */ }
+    }
+    document.querySelectorAll(".vt-btn").forEach(b => b.addEventListener("click", () => setView(b.dataset.view)));
+    let savedView = "home";
+    try { savedView = localStorage.getItem("apexView") || "home"; } catch (_) { /* 무시 */ }
+    setView(savedView === "dashboard" ? "dashboard" : "home");
+
+    refreshButton.addEventListener("click", () => { setView("dashboard"); refresh(); });
+    runButton.addEventListener("click", () => { setView("dashboard"); runScreener(); });
     initMcapButtons();
     loadUniverse();
     loadLatest();
@@ -2602,7 +3851,12 @@ def filter_steps(results: pd.DataFrame, universe_count: int) -> list[dict[str, o
     filters = [
         ("Liquidity",       bool_filter("liquidity_ok")),
         ("RS 20D > 0",      bool_filter("rs_positive", results["rs_spy_20d"] > 0)),
-        ("Volume Trigger",  bool_filter("surge_today") | bool_filter("sustained_accumulation")),
+        (
+            "Volume Trigger (5일 창)",
+            (results["days_since_trigger"].notna() & (results["days_since_trigger"] <= 4))
+            if "days_since_trigger" in results.columns
+            else bool_filter("surge_today") | bool_filter("sustained_accumulation"),
+        ),
     ]
     previous = len(results)
     for label, condition in filters:
@@ -2611,8 +3865,9 @@ def filter_steps(results: pd.DataFrame, universe_count: int) -> list[dict[str, o
         steps.append({"label": label, "count": count, "removed": max(previous - count, 0)})
         previous = count
     grade_series = results["grade"] if "grade" in results.columns else pd.Series("", index=results.index)
+    # 필터 단계가 아니라 후보 구성 통계 — B등급은 탈락이 아니다 (조정장에서는 B가 우수)
     steps.append({
-        "label": "A Grade (MA강세)",
+        "label": "구성: A등급 (참고)",
         "count": int((bool_filter("passed_hard_filters") & (grade_series == "A")).sum()),
         "removed": 0,
     })
@@ -2637,6 +3892,9 @@ def config_payload(config: ScreenerConfig) -> dict[str, object]:
         "surge_ratio_max": config.surge_ratio_max,
         "accumulation_trigger_days": config.accumulation_trigger_days,
         "vp_lookback": config.vp_lookback,
+        # 점수 문서(툴팁·퍼널 칩·필터링 방식)는 이 값으로 렌더 — main.py와 어긋날 수 없다
+        "score_weights": SCORE_WEIGHTS_V3,
+        "regime_fit_bonus": config.regime_fit_bonus,
     }
 
 
@@ -2652,11 +3910,23 @@ def response_from_results(
     candidates_path: Path | None = None,
     source: str,
     from_cache: bool = False,
+    stale_symbols: list[str] | None = None,
 ) -> dict[str, object]:
     candidates = results.loc[results["passed_hard_filters"].fillna(False)].copy()
+    commentary = None
+    result_date = results["date"].dropna().max() if "date" in results.columns else None
+    if result_date:
+        commentary_path = OUTPUT_DIR / f"commentary_{result_date}.json"
+        if commentary_path.exists():
+            try:
+                commentary = json.loads(commentary_path.read_text())
+            except Exception:
+                commentary = None
     candidate_columns = [
         "ticker", "name", "sector", "grade", "score",
         "signal_type", "warnings", "surge_today", "sustained_accumulation",
+        "triggered_today", "days_since_trigger", "score_3m", "verdict", "verdict_reason",
+        "next_earnings_date", "earnings_within_20d",
         "close", "market_cap",
         "rs_spy_20d", "rs_spy_50d", "rs_sector_20d",
         "close_to_50d_high",
@@ -2665,7 +3935,7 @@ def response_from_results(
         "accumulation_days_10d", "distribution_days_10d",
         "volume_ratio", "volume_trend", "close_position",
         "rsi_14", "avg_dollar_volume_20d", "return_20d",
-        "buy_price", "buy_price_basis",
+        "trigger_price", "ext_from_trigger",
         "base_stability", "sector_etf_to_52w_high",
     ]
     date = None
@@ -2695,6 +3965,16 @@ def response_from_results(
         "universe_csv": output_link(universe_path),
         "candidates_csv": output_link(candidates_path),
         "from_cache": from_cache,
+        "stale_symbols": stale_symbols or [],
+        "commentary": commentary,
+        "regime_detail": (
+            {
+                "trend": json_value(results["regime_trend"].iloc[0]),
+                "breadth": json_value(results["regime_breadth"].iloc[0]),
+                "vix_ratio": json_value(results["regime_vix_ratio"].iloc[0]),
+            }
+            if "regime_trend" in results.columns and len(results) else None
+        ),
         "last_run_at": last_run_at(),
     }
 
@@ -2772,20 +4052,56 @@ def diff_response() -> dict[str, object]:
     }
 
 
+def _stored_prices(symbol: str) -> pd.DataFrame | None:
+    """parquet 저장소에서 가격 이력을 읽는다 (스크리너가 아직 안 돈 날에도 마지막 저장분 사용)."""
+    return read_symbol(symbol, PROJECT_ROOT / DEFAULT_STORE_DIR)
+
+
+# 차트 오버레이(매수기준가·트리거 경과일) — 최신 유니버스 CSV를 mtime 기준으로 캐시
+_overlay_cache: dict[str, object] = {"key": None, "data": {}}
+
+
+def _symbol_overlays(symbol: str) -> dict[str, object]:
+    files = sorted(OUTPUT_DIR.glob("screener_universe_*.csv"))
+    if not files:
+        return {}
+    path = files[-1]
+    key = (str(path), path.stat().st_mtime)
+    if _overlay_cache["key"] != key:
+        try:
+            df = pd.read_csv(path)
+            data: dict[str, dict[str, object]] = {}
+            for _, row in df.iterrows():
+                data[str(row.get("ticker"))] = {
+                    "trigger_price": json_value(row.get("trigger_price")),
+                    "ext_from_trigger": json_value(row.get("ext_from_trigger")),
+                    "days_since_trigger": json_value(row.get("days_since_trigger")),
+                }
+            _overlay_cache["key"] = key
+            _overlay_cache["data"] = data
+        except Exception:
+            return {}
+    return _overlay_cache["data"].get(symbol, {})
+
+
 def chart_data(symbol: str, days: int = 63) -> dict[str, object]:
     symbol = symbol.strip().upper()
-    cache_file = PROJECT_ROOT / _symbol_cache_dir(ScreenerConfig().period) / f"{symbol}.pkl"
-    if not cache_file.exists():
+    df = _stored_prices(symbol)
+    if df is None:
         return {"error": "캐시 없음 — 스크리너를 먼저 실행해 주세요."}
     try:
-        with cache_file.open("rb") as f:
-            df = pickle.load(f)
         if df is None or df.empty or "Close" not in df.columns:
             return {"error": "데이터 없음"}
         close = df["Close"].dropna().tail(days)
         dates = [d.strftime("%Y-%m-%d") if hasattr(d, "strftime") else str(d) for d in close.index]
         prices = [round(float(v), 2) for v in close.values]
-        return {"symbol": symbol, "dates": dates, "prices": prices}
+        volumes: list[float] | None = None
+        if "Volume" in df.columns:
+            vol = df["Volume"].reindex(close.index)
+            volumes = [round(float(v), 0) if v == v else 0.0 for v in vol.values]
+        payload: dict[str, object] = {"symbol": symbol, "dates": dates, "prices": prices, "volumes": volumes}
+        payload.update(_symbol_overlays(symbol))
+        return payload
     except Exception as exc:
         return {"error": str(exc)}
 
@@ -2940,6 +4256,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 candidates_path=run.candidates_path,
                 source="run",
                 from_cache=run.from_cache,
+                stale_symbols=run.stale_symbols,
             ))
         except Exception as error:
             traceback.print_exc()

@@ -29,9 +29,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from main import (  # noqa: E402
     FEATURE_REQUIRED_COLUMNS,
     BENCHMARKS,
+    VIX_SYMBOLS,
     ScreenerConfig,
     add_scores,
-    calculate_market_state,
+    calculate_market_state_series,
     compute_feature_frame,
     download_prices,
     evaluate_row,
@@ -68,6 +69,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--horizons", type=int, nargs="+", default=[5, 10, 20, 60])
     parser.add_argument("--min-dollar-volume", type=float, default=50_000_000)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_BACKTEST_DIR)
+    parser.add_argument("--cost-bps", type=float, default=25.0, help="왕복 거래비용 (bp) — 포트폴리오 시뮬레이션용")
+    parser.add_argument("--top-n", type=int, default=10, help="포트폴리오 시뮬레이션 종목 수")
     return parser.parse_args()
 
 
@@ -106,10 +109,12 @@ def collect_snapshots(
         f"{spy_index[start].date()} ~ {spy_index[snapshot_positions[-1]].date()} (step={step}일)"
     )
 
+    regime_series, _ = calculate_market_state_series(prices, config)
+
     all_snapshots: list[pd.DataFrame] = []
     for n, pos in enumerate(snapshot_positions, 1):
         t = spy_index[pos]
-        market_state = calculate_market_state(spy.loc[:t], qqq.loc[:t], config)
+        market_state = str(regime_series.asof(t))
         rows = []
         for ticker, ff in features.items():
             try:
@@ -132,7 +137,7 @@ def collect_snapshots(
             rows.append(rec)
         if not rows:
             continue
-        snap = add_scores(pd.DataFrame(rows))
+        snap = add_scores(pd.DataFrame(rows), config)
         snap["snapshot_date"] = t.date().isoformat()
         all_snapshots.append(snap)
         print(f"\r  진행: {n}/{len(snapshot_positions)} ({t.date()}, 후보 {int(snap['passed_hard_filters'].sum())}개)", end="", flush=True)
@@ -234,6 +239,47 @@ def summarize(df: pd.DataFrame, horizons: list[int]) -> dict[str, pd.DataFrame]:
     }
 
 
+def portfolio_summary(df: pd.DataFrame, top_n: int = 10, cost_bps: float = 25.0) -> pd.DataFrame:
+    """주간 리밸런스 top-N 포트폴리오의 비용 후 성과.
+
+    스냅샷마다 후보 중 점수 상위 N개를 담고 다음 스냅샷까지 보유(fwd_excess_5d = 보유기간과
+    스냅샷 간격 일치). 회전율 = 직전 바스켓 대비 교체 비율, 비용 = 회전율 × 왕복 cost_bps.
+    첫 스냅샷은 회전율 1(전량 신규 매수)로 처리해 보수적으로 계산한다.
+    """
+    prev_holdings: set[str] = set()
+    rows = []
+    for date in sorted(df["snapshot_date"].unique()):
+        snap = df[
+            (df["snapshot_date"] == date)
+            & df["passed_hard_filters"].fillna(False)
+            & df["fwd_excess_5d"].notna()
+        ]
+        if len(snap) < top_n:
+            continue
+        basket = snap.nlargest(top_n, "score")
+        holdings = set(basket["ticker"])
+        turnover = 1.0 - len(holdings & prev_holdings) / top_n if prev_holdings else 1.0
+        gross = basket["fwd_excess_5d"].mean()
+        net = gross - turnover * cost_bps / 10_000
+        rows.append({"snapshot_date": date, "gross_excess_5d": gross, "net_excess_5d": net, "turnover": turnover})
+        prev_holdings = holdings
+    out = pd.DataFrame(rows)
+    if out.empty:
+        return out
+    summary = pd.DataFrame([{
+        "n_rebalances": len(out),
+        "avg_turnover": out["turnover"].mean(),
+        "gross_weekly_mean": out["gross_excess_5d"].mean(),
+        "net_weekly_mean": out["net_excess_5d"].mean(),
+        "cost_drag_weekly": out["gross_excess_5d"].mean() - out["net_excess_5d"].mean(),
+        "gross_cum": (1 + out["gross_excess_5d"]).prod() - 1,
+        "net_cum": (1 + out["net_excess_5d"]).prod() - 1,
+        "cost_bps_roundtrip": cost_bps,
+        "top_n": top_n,
+    }])
+    return summary
+
+
 def main() -> None:
     args = parse_args()
     config = ScreenerConfig(period=args.period, min_dollar_volume=args.min_dollar_volume)
@@ -241,11 +287,11 @@ def main() -> None:
     universe = load_universe(args.tickers)
     stock_symbols = universe["ticker"].tolist()
     sector_symbols = sorted(set(universe["sector_etf"].dropna()) - {""})
-    symbols = sorted(set(stock_symbols + list(BENCHMARKS) + sector_symbols))
+    symbols = sorted(set(stock_symbols + list(BENCHMARKS) + list(VIX_SYMBOLS) + sector_symbols))
 
     print(f"가격 데이터 로드 중 ({len(symbols)}개 심볼, period={args.period})...")
-    prices, from_cache = download_prices(symbols, config)
-    print(f"  로드 완료 (cache={from_cache}, {len(prices)}개)")
+    prices, report = download_prices(symbols, config)
+    print(f"  로드 완료 (cache={report.from_cache}, {len(prices)}개)")
 
     df = collect_snapshots(universe, prices, config, args.step, args.horizons)
 
@@ -256,6 +302,7 @@ def main() -> None:
     print(f"\n스냅샷 원본 저장: {rows_path} ({len(df):,} rows)")
 
     summaries = summarize(df, args.horizons)
+    summaries["portfolio"] = portfolio_summary(df, top_n=args.top_n, cost_bps=args.cost_bps)
     for name, table in summaries.items():
         path = args.output_dir / f"summary_{name}.csv"
         table.to_csv(path, index=False)
@@ -269,6 +316,8 @@ def main() -> None:
     print(summaries["ic"].to_string(index=False, float_format=lambda v: f"{v:.4f}"))
     print("\n=== 시장 국면별 후보 성과 (20d) ===")
     print(summaries["regime"].to_string(index=False, float_format=lambda v: f"{v:.4f}"))
+    print(f"\n=== 주간 top{args.top_n} 포트폴리오 (왕복 {args.cost_bps:.0f}bp) ===")
+    print(summaries["portfolio"].to_string(index=False, float_format=lambda v: f"{v:.4f}"))
 
 
 if __name__ == "__main__":

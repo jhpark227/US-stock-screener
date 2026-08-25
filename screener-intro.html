@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>US 주식 스크리너 — 소개</title>
+<style>
+  :root {
+    --bg: #f7f8f6;
+    --surface: #ffffff;
+    --ink: #1c2523;
+    --muted: #5c6b66;
+    --faint: #8a978f;
+    --accent: #156456;
+    --accent-soft: #e3efe9;
+    --line: #dfe5e1;
+    --chip-bg: #eef2ef;
+    --win-bg: #e3efe9;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #101614;
+      --surface: #18201d;
+      --ink: #e6ece9;
+      --muted: #93a29c;
+      --faint: #6b7a74;
+      --accent: #4fc4a8;
+      --accent-soft: #1d332c;
+      --line: #263029;
+      --chip-bg: #1f2926;
+      --win-bg: #1d332c;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", "Malgun Gothic", sans-serif;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+  .page { max-width: 760px; margin: 0 auto; padding: 56px 24px 72px; }
+
+  .eyebrow {
+    font-size: 12px; font-weight: 700; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--accent); margin: 0 0 10px;
+  }
+  h1 {
+    font-size: clamp(26px, 5vw, 34px); font-weight: 800; line-height: 1.3;
+    letter-spacing: -0.01em; margin: 0 0 14px; text-wrap: balance;
+  }
+  .lede { font-size: 17px; color: var(--muted); margin: 0; max-width: 40em; }
+  .lede strong { color: var(--ink); font-weight: 700; }
+
+  section { margin-top: 56px; }
+  h2 {
+    font-size: 20px; font-weight: 800; letter-spacing: -0.01em;
+    margin: 0 0 6px; text-wrap: balance;
+  }
+  .sub { font-size: 14.5px; color: var(--muted); margin: 0 0 20px; max-width: 44em; }
+
+  .mono {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+  .chip {
+    display: inline-block; padding: 2px 8px; border-radius: 6px;
+    background: var(--chip-bg); font-size: 12.5px; color: var(--muted);
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    white-space: nowrap;
+  }
+
+  /* ---- 핵심 아이디어 2단 ---- */
+  .idea { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 20px; }
+  @media (max-width: 560px) { .idea { grid-template-columns: 1fr; } }
+  .idea-card {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+    padding: 18px 20px;
+  }
+  .idea-card .q { font-size: 13px; font-weight: 700; color: var(--accent); margin: 0 0 6px; }
+  .idea-card .a { font-size: 15px; margin: 0; }
+  .idea-card .a b { font-weight: 800; }
+
+  /* ---- 퍼널 ---- */
+  .funnel { margin-top: 8px; }
+  .pool {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+    padding: 14px 18px; border-radius: 12px;
+    background: var(--surface); border: 1px solid var(--line);
+  }
+  .pool .n { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .pool .d { font-size: 13.5px; color: var(--muted); }
+  .gate {
+    position: relative; margin: 0 0 0 18px; padding: 16px 0 16px 26px;
+    border-left: 2px solid var(--line);
+  }
+  .gate::before {
+    content: ""; position: absolute; left: -6px; top: 26px;
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--accent); border: 2px solid var(--bg);
+  }
+  .gate .g-name { font-size: 15.5px; font-weight: 800; margin: 0 0 2px; }
+  .gate .g-name .idx { color: var(--accent); margin-right: 6px; }
+  .gate .g-why { font-size: 14px; color: var(--muted); margin: 0 0 8px; max-width: 42em; }
+  .pool.result { border-color: var(--accent); background: var(--accent-soft); }
+  .pool.result .n { color: var(--accent); }
+
+  /* ---- 신호 카드 ---- */
+  .signals { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 560px) { .signals { grid-template-columns: 1fr; } }
+  .sig {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+    padding: 18px 20px;
+  }
+  .sig h3 { font-size: 15.5px; font-weight: 800; margin: 0 0 4px; }
+  .sig p { font-size: 14px; color: var(--muted); margin: 0 0 10px; }
+  .sig-both {
+    grid-column: 1 / -1; border-color: var(--accent); background: var(--accent-soft);
+  }
+  .sig-both p { color: var(--ink); }
+
+  /* ---- 국면 × 등급 표 ---- */
+  .regime-wrap { overflow-x: auto; }
+  table.regime {
+    width: 100%; border-collapse: separate; border-spacing: 0;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+    overflow: hidden; font-size: 14.5px; min-width: 480px;
+  }
+  .regime th, .regime td { padding: 12px 16px; text-align: left; }
+  .regime thead th {
+    font-size: 12.5px; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--faint); font-weight: 700; border-bottom: 1px solid var(--line);
+  }
+  .regime tbody th {
+    font-weight: 700; font-size: 14px; border-bottom: 1px solid var(--line);
+    width: 38%;
+  }
+  .regime tbody td { border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+  .regime tbody tr:last-child th, .regime tbody tr:last-child td { border-bottom: none; }
+  .regime td.win { background: var(--win-bg); font-weight: 800; }
+  .regime td.win .tag {
+    display: inline-block; margin-left: 8px; font-size: 11.5px; font-weight: 700;
+    color: var(--accent); letter-spacing: 0.04em;
+  }
+  .regime .g-desc { display: block; font-size: 12.5px; color: var(--muted); font-weight: 400; }
+
+  /* ---- 바 차트 ---- */
+  .chart {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+    padding: 20px 22px 16px;
+  }
+  .chart-title { font-size: 13.5px; font-weight: 700; margin: 0 0 2px; }
+  .chart-note { font-size: 12.5px; color: var(--faint); margin: 0 0 16px; }
+  .bar-row {
+    display: grid; grid-template-columns: 88px 1fr 122px; align-items: center;
+    gap: 12px; padding: 7px 0;
+  }
+  .bar-row .lbl { font-size: 13.5px; color: var(--ink); font-weight: 600; }
+  .bar-track { position: relative; height: 12px; }
+  .bar-fill {
+    position: absolute; inset: 0 auto 0 0; border-radius: 0 4px 4px 0;
+    background: var(--accent); opacity: 0.55; min-width: 3px;
+  }
+  .bar-row.hero .bar-fill { opacity: 1; }
+  .bar-row:hover .bar-fill { opacity: 0.85; }
+  .bar-row.hero:hover .bar-fill { opacity: 1; }
+  .bar-val {
+    font-size: 13.5px; font-variant-numeric: tabular-nums; text-align: right;
+    color: var(--ink); white-space: nowrap;
+  }
+  .bar-val small { color: var(--faint); font-size: 12px; }
+  .bar-row.hero .bar-val { font-weight: 800; }
+  .baseline-note {
+    margin: 12px 0 0; padding-top: 12px; border-top: 1px solid var(--line);
+    font-size: 12.5px; color: var(--muted);
+  }
+
+  /* ---- 한계 ---- */
+  .caveats { margin: 0; padding: 0; list-style: none; display: grid; gap: 10px; }
+  .caveats li {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px 16px; font-size: 14px; color: var(--muted);
+  }
+  .caveats li b { color: var(--ink); }
+
+  footer {
+    margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--line);
+    font-size: 12.5px; color: var(--faint);
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .bar-fill { transition: opacity 0.15s ease; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <p class="eyebrow">US Stock Screener</p>
+    <h1>미국 주식 1,000개 중에서,<br>오늘 지켜볼 30개를 골라주는 도구</h1>
+    <p class="lede">
+      매일 장 마감 후 자동으로 돌아가는 개인용 스크리너입니다. 종목을 <strong>사주는 것이 아니라</strong>,
+      관찰할 가치가 있는 후보를 <strong>추려서 순서대로 보여주는</strong> 것까지가 이 도구의 일입니다.
+    </p>
+
+    <div class="idea">
+      <div class="idea-card">
+        <p class="q">어떤 종목을 찾나</p>
+        <p class="a"><b>거래량이 말해주는 종목.</b> 거래가 평소보다 눈에 띄게 늘었다는 건, 시장의 큰손들이 이 종목에서 무언가를 하고 있다는 신호입니다.</p>
+      </div>
+      <div class="idea-card">
+        <p class="q">어떤 순서로 보여주나</p>
+        <p class="a"><b>시장보다 강한 순서.</b> 같은 후보라도 S&amp;P 500 지수보다 잘 가고 있는 종목(상대강도)을 앞에 세웁니다.</p>
+      </div>
+    </div>
+  </header>
+
+  <section>
+    <p class="eyebrow">Step 1 — 거르기</p>
+    <h2>세 개의 관문</h2>
+    <p class="sub">매일 세 가지 질문을 통과한 종목만 후보가 됩니다. 이동평균이나 차트 모양으로 탈락시키지 않습니다 — 그건 다음 단계에서 참고 정보로만 씁니다.</p>
+
+    <div class="funnel">
+      <div class="pool">
+        <span class="n">954</span>
+        <span class="d">미국 시가총액 상위 종목 (매월 갱신)</span>
+      </div>
+
+      <div class="gate">
+        <p class="g-name"><span class="idx">①</span>사고팔기 충분한가</p>
+        <p class="g-why">하루 500억 원어치 이상 거래되는 종목만. 내 주문이 가격을 밀지 않아야 합니다.</p>
+        <span class="chip">20일 평균 거래대금 ≥ $50M</span>
+      </div>
+
+      <div class="gate">
+        <p class="g-name"><span class="idx">②</span>시장보다 강한가</p>
+        <p class="g-why">최근 한 달간 S&amp;P 500보다 못 갔다면 제외. 시장에 지고 있는 종목은 기다릴 이유가 없습니다.</p>
+        <span class="chip">SPY 대비 20일 상대강도 &gt; 0</span>
+      </div>
+
+      <div class="gate">
+        <p class="g-name"><span class="idx">③</span>거래량 사건이 있었나</p>
+        <p class="g-why">아래 두 신호 중 하나라도 켜져야 합니다. 아무 일도 없는 종목은 후보가 아닙니다.</p>
+        <span class="chip">당일 서지 OR 지속 매집</span>
+      </div>
+
+      <div class="pool result">
+        <span class="n">28</span>
+        <span class="d">오늘의 후보 (2026-08-03 기준)</span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">Step 2 — 신호</p>
+    <h2>거래량이 보내는 두 가지 신호</h2>
+    <p class="sub">둘 다 "누군가 조용히, 혹은 요란하게 사 모으고 있다"는 흔적입니다.</p>
+
+    <div class="signals">
+      <div class="sig">
+        <h3>서지 <span class="chip">surge</span></h3>
+        <p>오늘 하루 거래량이 평소의 1.5~5배로 튀면서 주가도 올랐다. 방금 시장의 주목을 받기 시작했다는 뜻.</p>
+      </div>
+      <div class="sig">
+        <h3>매집 <span class="chip">acc</span></h3>
+        <p>최근 10일 중 6일 이상, 평소보다 많은 거래량과 함께 올랐다. 요란하지 않게 꾸준히 사 모으는 중이라는 뜻.</p>
+      </div>
+      <div class="sig sig-both">
+        <h3>서지 + 매집 <span class="chip">surge+acc</span></h3>
+        <p>두 신호가 동시에 켜진 경우. 백테스트에서 가장 강한 조합으로, 20일 뒤 시장 대비 평균 <b>+4.0%</b>, 승률 <b>60%</b>를 기록했습니다.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">Step 3 — 순서 정하기</p>
+    <h2>시장 분위기에 맞는 종목을 앞으로</h2>
+    <p class="sub">
+      후보는 상대강도 중심의 점수로 정렬합니다. 여기에 한 가지 조정이 들어갑니다 —
+      후보를 <b>추세형(A)</b>과 <b>반등형(B)</b>으로 나누면, 시장 분위기에 따라 잘 되는 쪽이 뒤바뀌기 때문입니다.
+    </p>
+
+    <div class="regime-wrap">
+      <table class="regime">
+        <thead>
+          <tr>
+            <th scope="col">유형</th>
+            <th scope="col">상승장에서</th>
+            <th scope="col">조정장에서</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th scope="row">A · 추세형<span class="g-desc">상승 추세를 타고 있는 종목</span></th>
+            <td class="win">+2.5%<span class="tag">우선</span></td>
+            <td>+0.5%</td>
+          </tr>
+          <tr>
+            <th scope="row">B · 반등형<span class="g-desc">바닥에서 돌아서는 종목</span></th>
+            <td>+1.1%</td>
+            <td class="win">+2.7%<span class="tag">우선</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="sub" style="margin-top: 14px;">
+      그래서 상승장엔 A에, 조정장엔 B에 작은 가산점을 줘서 <b>지금 분위기에 맞는 쪽을 목록 위로</b> 올립니다.
+      어느 쪽도 탈락시키지는 않습니다 — 순서만 바뀝니다. (수치: 20일 뒤 시장 대비 초과수익 평균)
+    </p>
+  </section>
+
+  <section>
+    <p class="eyebrow">근거</p>
+    <h2>이 규칙들은 백테스트로 골랐습니다</h2>
+    <p class="sub">과거 63주 동안 매주 "그 시점에 스크리너를 돌렸다면"을 재현해, 신호별로 20일 뒤 성과를 측정했습니다.</p>
+
+    <div class="chart">
+      <p class="chart-title">신호별 20일 뒤 초과수익 (S&amp;P 500 대비 평균)</p>
+      <p class="chart-note">2025-02 ~ 2026-05 · 주간 스냅샷 63개 · 표본 58,687행</p>
+
+      <div class="bar-row">
+        <span class="lbl">신호 없음</span>
+        <div class="bar-track"><div class="bar-fill" style="width: 8.8%;"></div></div>
+        <span class="bar-val">+0.35% <small>승률 48%</small></span>
+      </div>
+      <div class="bar-row">
+        <span class="lbl">매집</span>
+        <div class="bar-track"><div class="bar-fill" style="width: 31.5%;"></div></div>
+        <span class="bar-val">+1.26% <small>승률 53%</small></span>
+      </div>
+      <div class="bar-row">
+        <span class="lbl">서지</span>
+        <div class="bar-track"><div class="bar-fill" style="width: 53.5%;"></div></div>
+        <span class="bar-val">+2.14% <small>승률 53%</small></span>
+      </div>
+      <div class="bar-row hero">
+        <span class="lbl">서지+매집</span>
+        <div class="bar-track"><div class="bar-fill" style="width: 100%;"></div></div>
+        <span class="bar-val">+4.00% <small>승률 60%</small></span>
+      </div>
+
+      <p class="baseline-note">
+        점수 상위 10종목만 담는다면: 국면 가산점 적용 전 +2.8% → 적용 후 <b>+3.1%</b> (승률 52.8% → 54.3%).
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">정직하게</p>
+    <h2>이 도구가 하지 않는 것</h2>
+    <ul class="caveats">
+      <li><b>매수 추천이 아닙니다.</b> "오늘 이 종목들을 들여다볼 가치가 있다"까지만 말해줍니다. 판단과 리스크 관리는 사람의 몫입니다.</li>
+      <li><b>백테스트는 상대 비교용입니다.</b> 유니버스가 "현재의" 상위 1,000종목이라 생존 편향이 있고, 거래 비용도 반영돼 있지 않습니다. 절대 수익률 약속이 아니라 규칙 간 우열을 가리는 근거입니다.</li>
+      <li><b>우위는 온건합니다.</b> 승률 53~60%짜리 통계적 기울기이지, 확실한 예측이 아닙니다. 개별 종목은 얼마든지 빗나갑니다.</li>
+    </ul>
+  </section>
+
+  <footer>
+    데이터: yfinance 일봉 · 매일 장 마감 후 자동 실행 · 웹 대시보드로 열람 ·
+    백테스트와 수치 근거는 저장소의 <span class="mono">outputs/backtest/</span> 참조
+  </footer>
+</div>
+</body>
+</html>

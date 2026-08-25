@@ -19,6 +19,10 @@ import yfinance as yf
 from yfinance import EquityQuery
 
 OUTPUT_PATH = Path("data/tickers_us1000.csv")
+# 포인트인타임 백테스트용 유니버스 이력: 갱신 시점마다 날짜 스탬프 사본을 남긴다.
+# 현재 유니버스는 "지금 기준" 시총 상위라 생존 편향이 있고, 이력이 쌓여야만
+# 과거 시점 재현 시 당시 유니버스를 쓸 수 있다. 절대 삭제/덮어쓰기 금지.
+HISTORY_DIR = Path("data/universe_history")
 
 GICS_ETF_MAP = {
     "Information Technology": "XLK",
@@ -172,6 +176,11 @@ def main() -> None:
 
     universe.to_csv(OUTPUT_PATH, index=False)
     print(f"\n저장 완료: {OUTPUT_PATH}  ({len(universe)}개 종목)")
+
+    HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+    snapshot_path = HISTORY_DIR / f"tickers_us1000_{pd.Timestamp.today():%Y-%m-%d}.csv"
+    universe.to_csv(snapshot_path, index=False)
+    print(f"이력 스냅샷 저장: {snapshot_path}")
 
 
 if __name__ == "__main__":
