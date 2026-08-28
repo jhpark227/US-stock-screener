@@ -156,7 +156,7 @@ def build_trend_summary(date: str) -> str:
 
 def build_prompt(date: str, market_state: str, rows: pd.DataFrame, df: pd.DataFrame) -> str:
     cols = [
-        "ticker", "name", "sector", "verdict", "verdict_reason",
+        "ticker", "name", "sector", "verdict", "verdict_reason", "top_pick_rank",
         "signal_type", "days_since_trigger", "grade", "score", "score_3m",
         "rs_spy_20d", "rs_spy_50d", "volume_ratio", "close_position", "rsi_14",
         "warnings", "next_earnings_date", "close", "trigger_price", "ext_from_trigger",

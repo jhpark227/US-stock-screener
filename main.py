@@ -72,6 +72,10 @@ class ScreenerConfig:
     verdict_w3_score3m: float = 0.15      # 단기 이벤트성 대기 기준
     verdict_min_score_pct: float = 0.40   # 후보 내 점수 percentile 하한 — 미만이면 스킵.
                                           # 검증: 하위 40% 진입 검토는 -0.23%(승률 46%)로 스킵 그룹보다 나쁨
+    # Top pick (2026-08-28): 진입 검토 중 집중 후보 선별 개수. 검증(validate_top_picks.py, 38 스냅샷):
+    # 클러스터당 1종목 + 매집(acc/surge+acc)×어닝스 임박 우선 top-5가 점수 top-5 대비 +1.46%p(NW t=1.71),
+    # 바스켓 승률 63→76%, 최악 스냅샷 -9.7→-7.4%. top-3에서는 매집 우선이 역효과라 5로 고정.
+    top_pick_count: int = 5
     accumulation_days_min: int = 3
     distribution_days_max: int = 1
     vp_lookback: int = 10
@@ -890,16 +894,24 @@ def assign_verdicts(
       S3 상관 클러스터(≥3개) 중복 — 국면 정합 등급 우선·점수순 상위 2개만 대표
       S4 score_3m < 0.10 + 분산 경고 — 단기 이벤트 소진
       S5 후보 내 점수 percentile < 40% — 검증상 이 구간의 "진입 검토"는 스킵보다도 나빴음
-      W1 어닝스 20일 내 — 이벤트 베팅 분리 (다음 어닝스가 없으면 해당 없음)
       W2 과열 경고 + 당일 저가권 마감(<0.5) — 눌림 대기
       W3 score_3m < 0.15 — 신호 재발생/중기 추세 대기
       통과 → 진입 검토
+
+    W1(어닝스 20일 내 → 대기)은 2026-08-28 폐지: 검증(validate_earnings.py, 63 스냅샷) 결과
+    어닝스 임박(0~20일)이 진입 검토 최고 성과 구간(+4.30%/승률 62% vs 비임박 +2.26%/52%,
+    paired +4.65%p NW t=2.30)이고 "발표 직후" 그룹이 +0.74%로 평균 이하였다. 갭 리스크
+    (-15% 이하 빈도 1.5배)는 사유의 "갭 주의" 문구와 기존 경고 라벨로 표시만 한다.
+
+    top_pick_rank(1~top_pick_count): 진입 검토 중 집중 후보 — 매집(acc/surge+acc)×어닝스
+    임박 우선, 그 다음 점수순, 상관 클러스터당 1종목. 0이면 미선정. 근거는 ScreenerConfig 참조.
     판정은 백테스트로 검증 가능해야 하므로 여기서만 결정한다. AI는 설명문만 작성.
     """
     config = config or ScreenerConfig()
     results = results.copy()
     results["verdict"] = ""
     results["verdict_reason"] = ""
+    results["top_pick_rank"] = 0
     candidate_mask = results["passed_hard_filters"].fillna(False)
     cand = results.loc[candidate_mask]
     if cand.empty:
@@ -928,6 +940,8 @@ def assign_verdicts(
         days = row.get("days_since_trigger")
         mismatch = fit_grade is not None and row["grade"] != fit_grade
         in_cluster = ticker in clusters
+        e_flag = row.get("earnings_within_20d", False)
+        earnings_imminent = False if pd.isna(e_flag) else bool(e_flag)
 
         if row["signal_type"] == "acc" and days is not None and days >= 3:
             verdict, reason = "스킵", f"acc D+{int(days)} 관찰 종료 — 신호 재발생 전까지 관망"
@@ -939,8 +953,6 @@ def assign_verdicts(
             verdict, reason = "스킵", f"단기 이벤트성(3M {s3m:.2f}) + 분산 매물"
         elif score_pct[idx] < config.verdict_min_score_pct:
             verdict, reason = "스킵", f"점수 후순위 (후보 내 하위 {score_pct[idx]:.0%}) — 우선순위 미달"
-        elif (lambda v: False if pd.isna(v) else bool(v))(row.get("earnings_within_20d", False)):
-            verdict, reason = "대기", f"어닝스 {row.get('next_earnings_date', '')} — 발표 후 재평가"
         elif "과열" in warnings and float(row.get("close_position") or 1.0) < 0.5:
             verdict, reason = "대기", "과열 + 당일 저가권 마감 — 단기 소화 후 재평가"
         elif s3m < config.verdict_w3_score3m:
@@ -952,10 +964,36 @@ def assign_verdicts(
             parts.append(f"{row['signal_type']} D+{int(days) if days is not None else '?'}")
             if in_cluster:
                 parts.append(f"클러스터 대표({len(clusters[ticker])}종목 중)")
+            if earnings_imminent:
+                acc_note = " — 발표 전 매집은 선취 거래 해석" if row["signal_type"] in ("acc", "surge+acc") else ""
+                parts.append(f"어닝스 {row.get('next_earnings_date', '')} 갭 주의{acc_note}")
             verdict, reason = "진입 검토", " · ".join(parts)
 
         results.at[idx, "verdict"] = verdict
         results.at[idx, "verdict_reason"] = reason
+
+    # Top pick: 진입 검토 중 최대 top_pick_count개. 매집×어닝스 임박 우선 → 점수순, 클러스터당 1종목.
+    def _pick_key(i: int) -> tuple[int, float]:
+        row = results.loc[i]
+        e = row.get("earnings_within_20d", False)
+        imminent = not pd.isna(e) and bool(e)
+        acc_imminent = imminent and row["signal_type"] in ("acc", "surge+acc")
+        return (0 if acc_imminent else 1, -float(row["score"]))
+
+    entry_idx = [i for i in cand.index if results.at[i, "verdict"] == "진입 검토"]
+    used_clusters: set[str] = set()
+    rank = 0
+    for i in sorted(entry_idx, key=_pick_key):
+        ticker = results.at[i, "ticker"]
+        cluster_key = min(clusters[ticker]) if ticker in clusters else None
+        if cluster_key is not None and cluster_key in used_clusters:
+            continue
+        rank += 1
+        results.at[i, "top_pick_rank"] = rank
+        if cluster_key is not None:
+            used_clusters.add(cluster_key)
+        if rank >= config.top_pick_count:
+            break
     return results
 
 
