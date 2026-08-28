@@ -2389,6 +2389,7 @@ INDEX_HTML = r"""
       ["_diff",                  "",             "diff"],
       ["_rank",                  "#",            "rank"],
       ["ticker",                 "Ticker",       "text"],
+      ["top_pick_rank",          "★",            "toppick"],
       ["name",                   "Name",         "text"],
       ["sector",                 "Sector",       "text"],
       ["signal_type",            "Signal",       "signal"],
@@ -2787,7 +2788,8 @@ INDEX_HTML = r"""
       "sector":                 "GICS 섹터",
       "signal_type":            "거래량 신호 종류\n급증(unusual volume): 당일 거래량 1.5~5배 + 양봉\n매집(accumulation): 최근 10일 중 매집일 6일 이상\n급증+매집: 둘 다 충족 — 백테스트상 가장 강한 신호",
       "days_since_trigger":     "신호 후 경과 거래일 (NEW = 오늘)\n점은 5일 관찰기간의 남은 일수 — 신호 직후가 가장 신선\n5거래일이 지나면 관찰 종료",
-      "verdict":                "코드 규칙이 결정론적으로 산출한 판정 (AI 아님)\n진입 검토: 규칙 통과 / 대기: 조건 충족 대기 / 스킵: 오늘은 제외\n★n = Top pick: 진입 검토 중 집중 후보 최대 5개 (매집×어닝스 임박 우선, 클러스터당 1종목)\n사유는 상단 '오늘의 판단' 카드·행에 표시",
+      "verdict":                "코드 규칙이 결정론적으로 산출한 판정 (AI 아님)\n진입 검토: 규칙 통과 / 대기: 조건 충족 대기 / 스킵: 오늘은 제외\n사유는 상단 '오늘의 판단' 카드·행에 표시",
+      "top_pick_rank":          "Top pick — 진입 검토 중 집중 후보 최대 5개\n매집×어닝스 임박 우선, 그다음 점수순, 상관 클러스터당 1종목",
       "grade":                  "MA 컨텍스트 등급\nA: MA60 위 + MA60 상승 (추세 속 신호)\nB: MA 약세 (반등 성격 — 조정장에서는 B가 우수)",
       "score":                  "점수 v3 — RS 중심 percentile 가중합 (가중치는 서버 설정에서 로드)",
       "score_3m":               "3개월(60일) 관점 느린 모멘텀 점수 (실험적)\n12-1 모멘텀 60% + 6-1 모멘텀 40% percentile\n생존 편향에 가장 민감한 지표 — 상대 순위 전용",
@@ -3149,8 +3151,13 @@ INDEX_HTML = r"""
             const v = row[key] || "";
             const st = VERDICT_COLORS[v];
             if (!st) return `<td></td>`;
-            const star = row.top_pick_rank ? `<span style="color:#f5a623;font-weight:700;margin-right:3px" title="Top pick #${row.top_pick_rank} — 매집×임박 우선·클러스터당 1종목">★${row.top_pick_rank}</span>` : "";
-            return `<td title="${escapeHtml(displayCopy(row.verdict_reason))}">${star}<span style="font-size:10px;padding:2px 7px;border-radius:999px;white-space:nowrap;background:${st};color:#fff">${escapeHtml(v)}</span></td>`;
+            return `<td title="${escapeHtml(displayCopy(row.verdict_reason))}"><span style="font-size:10px;padding:2px 7px;border-radius:999px;white-space:nowrap;background:${st};color:#fff">${escapeHtml(v)}</span></td>`;
+          }
+          if (type === "toppick") {
+            const rank = row.top_pick_rank;
+            if (!rank) return `<td class="center"></td>`;
+            return `<td class="center" title="Top pick #${rank} — 매집×임박 우선·클러스터당 1종목">
+              <span style="color:#f5a623;font-weight:700">★${rank}</span></td>`;
           }
           if (type === "pctdist") {
             const v = row[key];
