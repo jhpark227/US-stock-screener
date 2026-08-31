@@ -20,6 +20,7 @@
       --accent: #18745a;
       --accent-soft: #dcebe5;
       --warn: #a35f00;
+      --gold: #8a5b00;   /* top pick — 흰 배경 대비 4.5:1 이상 */
       --danger: #a83a35;
       --shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
     }
@@ -481,6 +482,10 @@
     th.sort-asc .sort-arrow,
     th.sort-desc .sort-arrow { opacity: 1; color: var(--accent); }
 
+    th[data-key]:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; background: #f0f0ec; }
+
+    .tp-star { color: var(--gold); font-weight: 700; }
+
     tr:last-child td { border-bottom: 0; }
 
     tbody tr:hover { background: #f6f9f7; }
@@ -671,6 +676,9 @@
     .ec-pill.sig-both  { color: #fff; background: #0e5b45; border-color: #0e5b45; }
     .ec-pill.warn { border-color: #f0d8a0; background: #fef6e8; color: var(--warn); }
     .ec-pill.fit  { border-color: var(--accent); background: none; color: var(--accent); }
+    .ec-pill.toppick { border-color: var(--gold); background: var(--gold); color: #fff; font-weight: 700; }
+
+    .ec-toppick-note { font-size: 11px; color: var(--gold); }
 
     .ec-chart { height: 74px; min-width: 0; }
     .ec-chart svg { width: 100%; height: 100%; display: block; overflow: visible; }
@@ -1280,18 +1288,17 @@
 
     .tr-inline-chart-wrap svg { width: 100%; height: 100%; display: block; overflow: visible; }
 
-    /* Chart popup modal */
+    /* Chart popup modal — <dialog>.showModal()이 포커스 트랩·ESC·배경 inert·포커스 복귀를 처리 */
     .chart-overlay {
-      display: none;
-      position: fixed;
-      inset: 0;
-      background: rgba(0,0,0,0.35);
-      z-index: 100;
-      align-items: center;
-      justify-content: center;
+      border: 0;
+      padding: 0;
+      background: transparent;
+      color: var(--text);   /* dialog UA 기본색(CanvasText) 대신 팔레트 상속 */
+      max-width: none;
+      max-height: none;
     }
 
-    .chart-overlay.open { display: flex; }
+    .chart-overlay::backdrop { background: rgba(0,0,0,0.35); }
 
     .chart-modal {
       background: var(--surface);
@@ -1783,6 +1790,7 @@
       .mcc-pill.grade-b { border-color: #e3d8ae; background: #eee9d9; color: var(--warn); }
       .mcc-pill.new { border-color: var(--accent); background: var(--accent); color: #fff; }
       .mcc-pill.warn { border-color: #f0d8a0; background: #fef6e8; color: var(--warn); }
+      .mcc-pill.toppick { border-color: var(--gold); background: var(--gold); color: #fff; font-weight: 700; }
 
       .mcc-metrics {
         display: grid;
@@ -1913,8 +1921,8 @@
       .tr-inline-charts { min-height: 120px; }
 
       .chart-overlay {
-        align-items: flex-end;
-        padding-top: env(safe-area-inset-top);
+        margin: auto 0 0;   /* 모바일: 바텀 시트 */
+        width: 100%;
       }
 
       .chart-modal {
@@ -2298,9 +2306,9 @@
     </div><!-- /dashboardView -->
   </main>
 
-  <div class="chart-overlay" id="chartOverlay">
+  <dialog class="chart-overlay" id="chartOverlay" aria-labelledby="chartModalTicker">
     <div class="chart-modal" id="chartModal">
-      <button class="chart-modal-close" id="chartModalClose">✕</button>
+      <button class="chart-modal-close" id="chartModalClose" aria-label="차트 닫기">✕</button>
       <div class="chart-modal-header">
         <span class="chart-modal-ticker" id="chartModalTicker"></span>
         <span class="chart-modal-name" id="chartModalName"></span>
@@ -2341,7 +2349,7 @@
         </a>
       </div>
     </div>
-  </div>
+  </dialog>
 
   <script>
     const insightBar       = document.getElementById("insightBar");
@@ -2903,6 +2911,7 @@
 
     function entryPills(r) {
       const pills = [];
+      if (r.top_pick_rank) pills.push(`<span class="ec-pill toppick">★${escapeHtml(r.top_pick_rank)} TOP PICK</span>`);
       if (r.days_since_trigger === 0 || r._diff === "new") pills.push(`<span class="ec-pill new">NEW</span>`);
       else if (r.days_since_trigger !== null && r.days_since_trigger !== undefined) pills.push(`<span class="ec-pill">D+${escapeHtml(r.days_since_trigger)}</span>`);
       if (r.grade) pills.push(`<span class="ec-pill grade-${String(r.grade).toLowerCase()}">${escapeHtml(r.grade)}등급${regimeFit(r) ? " · 국면 정합" : ""}</span>`);
@@ -2922,17 +2931,21 @@
         ? `<div class="ec-note">${escapeHtml(note)}</div>`
         : (r.verdict_reason ? `<div class="ec-note fallback">${escapeHtml(displayCopy(r.verdict_reason))}</div>` : "");
       const fmt = (v, type) => v === null || v === undefined ? "–" : formatValue(v, type);
+      // 툴팁 아닌 상시 텍스트 — 터치·키보드에서도 top pick 의미가 보이도록
+      const topPickHtml = r.top_pick_rank
+        ? `<div class="ec-toppick-note">★${escapeHtml(r.top_pick_rank)} Top pick — 진입 검토 중 집중 후보 (매집×임박 우선, 상관 클러스터당 1종목)</div>`
+        : "";
       return `
         <article class="entry-card">
           <div class="ec-head">
             <div class="ec-id">
-              ${r.top_pick_rank ? `<span style="color:#f5a623;font-weight:700;font-size:13px" title="Top pick #${r.top_pick_rank} — 매집×임박 우선·클러스터당 1종목">★${r.top_pick_rank}</span>` : ""}
               <span class="ticker-link ec-ticker" data-ticker="${escapeHtml(r.ticker)}" data-name="${escapeHtml(r.name || "")}">${escapeHtml(r.ticker)}</span>
               <span class="ec-name">${escapeHtml(r.name || "")}${r.sector ? ` · ${escapeHtml(r.sector)}` : ""}</span>
             </div>
             <div class="ec-score">${escapeHtml(fmt(r.score, "score2"))}<small>Score</small></div>
           </div>
           <div class="ec-pills">${entryPills(r)}</div>
+          ${topPickHtml}
           <div>
             <div class="tr-inline-chart-header">
               <span class="tr-inline-chart-period">3M</span>
@@ -3061,6 +3074,7 @@
           ? "–"
           : `${formatValue(row.volume_ratio, "decimal")}×`;
         const pills = [];
+        if (row.top_pick_rank) pills.push(`<span class="mcc-pill toppick">★${escapeHtml(row.top_pick_rank)} TOP PICK</span>`);
         if (row._diff) pills.push(`<span class="mcc-pill new">${escapeHtml(diffLabels[row._diff] || row._diff)}</span>`);
         if (row.grade) pills.push(`<span class="mcc-pill grade-${String(row.grade).toLowerCase()}">${escapeHtml(row.grade)}등급</span>`);
         if (row.signal_type) pills.push(`<span class="mcc-pill">${escapeHtml(signalLabels[row.signal_type] || row.signal_type)}</span>`);
@@ -3119,14 +3133,15 @@
         return;
       }
       const head = columns.map(([key, label, type]) => {
-        if (type === "diff") return `<th class="diff-badge-cell"></th>`;
+        if (type === "diff") return `<th class="diff-badge-cell" scope="col"></th>`;
         const isNum = ["pct", "pctdist", "ratio", "decimal", "score2", "scorebar", "number", "marketcap", "money", "price"].includes(type);
         const isCenter = ["flag", "vp", "vstr"].includes(type);
         let cls = isNum ? "num" : isCenter ? "center" : type === "rank" ? "rank" : "";
         let sortCls = key === sortKey ? (sortAsc ? " sort-asc" : " sort-desc") : "";
         const arrow = key === sortKey ? (sortAsc ? "↑" : "↓") : "↕";
+        const ariaSort = key === sortKey ? ` aria-sort="${sortAsc ? "ascending" : "descending"}"` : "";
         const tooltip = columnTooltips[key] ? ` title="${escapeHtml(columnTooltips[key])}"` : "";
-        return `<th class="${cls}${sortCls}" data-key="${escapeHtml(key)}"${tooltip}>${escapeHtml(label)}<span class="sort-arrow">${arrow}</span></th>`;
+        return `<th class="${cls}${sortCls}" scope="col" data-key="${escapeHtml(key)}" tabindex="0"${ariaSort}${tooltip}>${escapeHtml(label)}<span class="sort-arrow" aria-hidden="true">${arrow}</span></th>`;
       }).join("");
       const body = rows.map(row => {
         const cells = columns.map(([key, , type]) => {
@@ -3170,7 +3185,7 @@
             const rank = row.top_pick_rank;
             if (!rank) return `<td class="center"></td>`;
             return `<td class="center" title="Top pick #${rank} — 매집×임박 우선·클러스터당 1종목">
-              <span style="color:#f5a623;font-weight:700">★${rank}</span></td>`;
+              <span class="tp-star">★${rank}</span></td>`;
           }
           if (type === "pctdist") {
             const v = row[key];
@@ -3243,9 +3258,9 @@
         mobileSort.value = mobileSortValue;
       }
 
-      // bind sort click
+      // bind sort click + keyboard (Enter/Space)
       candidateTable.querySelectorAll("th[data-key]").forEach(th => {
-        th.addEventListener("click", () => {
+        const toggleSort = () => {
           const key = th.dataset.key;
           if (sortKey === key) {
             sortAsc = !sortAsc;
@@ -3254,6 +3269,14 @@
             sortAsc = key === "ticker" || key === "name" || key === "sector";
           }
           applyFilters();
+        };
+        th.addEventListener("click", toggleSort);
+        th.addEventListener("keydown", e => {
+          if (e.key !== "Enter" && e.key !== " ") return;
+          e.preventDefault();
+          toggleSort();
+          // 재렌더로 th가 교체되므로 같은 컬럼에 포커스 복원
+          candidateTable.querySelector(`th[data-key="${CSS.escape(th.dataset.key)}"]`)?.focus();
         });
       });
     }
@@ -3540,12 +3563,14 @@
     const chartModalClose = document.getElementById("chartModalClose");
 
     function closeChartModal() {
-      chartOverlay.classList.remove("open");
+      if (chartOverlay.open) chartOverlay.close();
     }
 
     chartModalClose.addEventListener("click", closeChartModal);
+    // ::backdrop 클릭은 dialog 자신이 target — 배경 클릭으로 닫기
     chartOverlay.addEventListener("click", e => { if (e.target === chartOverlay) closeChartModal(); });
-    document.addEventListener("keydown", e => { if (e.key === "Escape") closeChartModal(); });
+    // ESC 등 어느 경로로 닫혀도 close 이벤트가 발생 — 배경 스크롤 잠금 해제를 일원화
+    chartOverlay.addEventListener("close", () => { document.body.style.overflow = ""; });
 
     // 가격 라인 + 거래량 바(하단 밴드) + 발생가 점선 + 신호일 마커를 한 SVG에 렌더.
     // 거래량 스크리너의 근거(급증·매집)를 차트에서 직접 검증할 수 있게 한다. 색은 기존 토큰만 사용.
@@ -3681,7 +3706,8 @@
       document.getElementById("chartModalName").textContent = name || "";
       document.getElementById("chartPerplexityBtn").href =
         `https://www.perplexity.ai/finance/${encodeURIComponent(ticker)}`;
-      chartOverlay.classList.add("open");
+      document.body.style.overflow = "hidden";
+      chartOverlay.showModal();
       [21, 63, 126, 252].forEach(days => loadChartCell(ticker, days));
     }
 
