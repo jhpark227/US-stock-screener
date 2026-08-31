@@ -10,6 +10,14 @@
   D: B + surge만×어닝스 임박 최대 1종목
   E: C + D
   F: B + 임박 전체 우선 배치 (참고용)
+  G: C − 클러스터 캡 (매집×임박 우선 → 점수순, 캡 없음 — 종목 단위 pick)
+     → 2026-08-31 기각: 종목당 지표로도 개선 없음(-0.39%p, t=-1.02), C↔G 중첩 96%
+       (캡 발동 자체가 5/38 스냅샷). 캡 유지 + "동일 베팅 대기" 라벨로 확정.
+
+지표 (2026-08-31 확장): 바스켓 지표(스냅샷 동일가중)에 더해 종목 단위 지표를
+산출한다 — 종목당 평균 초과수익·승률·p5 꼬리(전 스냅샷 풀링), 순위별 성과
+(순위 단조성), C 대비 paired 비교, C↔G pick 중첩률. top pick의 목적이
+"바스켓"이 아니라 "종목 단위 확신 순위"라면 종목당 지표가 기준이 된다.
 
 실행: UV_CACHE_DIR=/tmp/uv-cache uv run python scripts/validate_top_picks.py
 """
@@ -47,7 +55,7 @@ def select_picks(g: pd.DataFrame, cluster_of: dict[str, int], variant: str, top_
     g["acc_imminent"] = g["signal_type"].isin(["acc", "surge+acc"]) & g["imminent"]
     g["surge_imminent"] = (g["signal_type"] == "surge") & g["imminent"]
 
-    if variant in ("C", "E"):
+    if variant in ("C", "E", "G"):
         g["_tier"] = np.where(g["acc_imminent"], 0, 1)
     elif variant == "F":
         g["_tier"] = np.where(g["imminent"], 0, 1)
@@ -55,18 +63,19 @@ def select_picks(g: pd.DataFrame, cluster_of: dict[str, int], variant: str, top_
         g["_tier"] = 0
     g = g.sort_values(["_tier", "score"], ascending=[True, False])
 
+    no_cap = variant in ("A", "G")
     picks = []
     used_clusters: set[int] = set()
     surge_imm_count = 0
     for _, row in g.iterrows():
-        if variant != "A":
+        if not no_cap:
             cid = cluster_of.get(row["ticker"])
             if cid is not None and cid in used_clusters:
                 continue
         if variant in ("D", "E") and row["surge_imminent"] and surge_imm_count >= 1:
             continue
         picks.append(row)
-        if variant != "A":
+        if not no_cap:
             cid = cluster_of.get(row["ticker"])
             if cid is not None:
                 used_clusters.add(cid)
@@ -74,7 +83,10 @@ def select_picks(g: pd.DataFrame, cluster_of: dict[str, int], variant: str, top_
             surge_imm_count += 1
         if len(picks) >= top_n:
             break
-    return pd.DataFrame(picks)
+    out = pd.DataFrame(picks)
+    if len(out):
+        out["pick_rank"] = range(1, len(out) + 1)
+    return out
 
 
 def main() -> None:
@@ -91,9 +103,9 @@ def main() -> None:
     prices, report = download_prices(symbols, config)
     print(f"가격 로드 (cache hit: {report.from_cache})")
 
-    variants = ["A", "B", "C", "D", "E", "F"]
+    variants = ["A", "B", "C", "D", "E", "F", "G"]
     results: dict[int, dict[str, dict[str, list]]] = {
-        n: {v: {"dates": [], "returns": []} for v in variants} for n in (3, 5)
+        n: {v: {"dates": [], "returns": [], "picks": []} for v in variants} for n in (3, 5)
     }
 
     snaps = sorted(df["snapshot_date"].unique())
@@ -116,6 +128,9 @@ def main() -> None:
                 if len(picks):
                     results[top_n][v]["dates"].append(date)
                     results[top_n][v]["returns"].append(picks["fwd_excess_20d"].mean())
+                    results[top_n][v]["picks"].append(
+                        picks[["snapshot_date", "ticker", "pick_rank", "fwd_excess_20d"]]
+                    )
         print(f"\r진행 {i}/{len(snaps)}", end="", flush=True)
     print()
 
@@ -126,29 +141,63 @@ def main() -> None:
         "D": "B + surge×임박 ≤1",
         "E": "C + D",
         "F": "B + 임박 전체 우선 (참고)",
+        "G": "C − 클러스터 캡 (종목 단위)",
     }
     for top_n in (3, 5):
-        print(f"\n=== top-{top_n} 바스켓 (스냅샷별 동일가중, 20d SPY 초과수익) ===")
+        print(f"\n=== top-{top_n} (20d SPY 초과수익 | 바스켓=스냅샷 동일가중, 종목당=풀링) ===")
         base = pd.Series(results[top_n]["A"]["returns"], index=results[top_n]["A"]["dates"])
+        base_c = pd.Series(results[top_n]["C"]["returns"], index=results[top_n]["C"]["dates"])
         rows_out = []
         for v in variants:
             r = pd.Series(results[top_n][v]["returns"], index=results[top_n][v]["dates"])
             diff = (r - base).dropna()
+            diff_c = (r - base_c).dropna()
             half = len(r) // 2
+            pooled = pd.concat(results[top_n][v]["picks"], ignore_index=True)
+            ret = pooled["fwd_excess_20d"]
             rows_out.append({
                 "변형": f"{v}: {labels[v]}",
-                "mean%": r.mean() * 100,
-                "win%": (r > 0).mean() * 100,
+                "바스켓mean%": r.mean() * 100,
+                "바스켓win%": (r > 0).mean() * 100,
                 "worst%": r.min() * 100,
                 "전반%": r.iloc[:half].mean() * 100,
                 "후반%": r.iloc[half:].mean() * 100,
                 "vsA%p": diff.mean() * 100,
-                "NW t": nw_tstat(diff) if v != "A" else np.nan,
+                "tA": nw_tstat(diff) if v != "A" else np.nan,
+                "vsC%p": diff_c.mean() * 100,
+                "tC": nw_tstat(diff_c) if v != "C" else np.nan,
+                "종목mean%": ret.mean() * 100,
+                "종목win%": (ret > 0).mean() * 100,
+                "종목p5%": ret.quantile(0.05) * 100,
+                "n_pick": len(ret),
                 "n_snap": len(r),
             })
         table = pd.DataFrame(rows_out).set_index("변형")
         print(table.round(2).to_string())
         table.to_csv(OUTPUT_DIR / f"summary_top_picks_{top_n}.csv")
+
+        # 순위 단조성: pick_rank별 종목당 성과 (A/C/G)
+        print(f"\n--- top-{top_n} 순위별 종목당 성과 (mean% / win% / n) ---")
+        rank_rows = []
+        for v in ("A", "C", "G"):
+            pooled = pd.concat(results[top_n][v]["picks"], ignore_index=True)
+            by_rank = pooled.groupby("pick_rank")["fwd_excess_20d"]
+            rank_rows.append({
+                "변형": v,
+                **{
+                    f"★{k}": f"{grp.mean()*100:+.2f} / {(grp>0).mean()*100:.0f}% / {len(grp)}"
+                    for k, grp in by_rank
+                },
+            })
+        print(pd.DataFrame(rank_rows).set_index("변형").to_string())
+
+        # C↔G pick 중첩률 (캡이 실제로 바꾸는 비율)
+        c_picks = {d: set(p["ticker"]) for d, p in zip(results[top_n]["C"]["dates"], results[top_n]["C"]["picks"])}
+        g_picks = {d: set(p["ticker"]) for d, p in zip(results[top_n]["G"]["dates"], results[top_n]["G"]["picks"])}
+        common_dates = sorted(set(c_picks) & set(g_picks))
+        overlaps = [len(c_picks[d] & g_picks[d]) / max(len(c_picks[d] | g_picks[d]), 1) for d in common_dates]
+        identical = sum(1 for d in common_dates if c_picks[d] == g_picks[d])
+        print(f"C↔G 중첩률(자카드) 평균 {np.mean(overlaps):.0%}, 완전 동일 스냅샷 {identical}/{len(common_dates)}")
     print(f"\n저장: {OUTPUT_DIR}/summary_top_picks_3.csv, summary_top_picks_5.csv")
 
 

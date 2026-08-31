@@ -237,6 +237,11 @@ def _merge_incremental(
     if rel > OVERLAP_RTOL:
         return None, True  # 배당/분할로 과거 수정주가 재계산됨 — 전체 리프레시
     merged = pd.concat([stored.loc[stored.index < new.index.min()], new])
+    # 야후 응답이 저장분보다 짧게 끝나는 경우(마지막 봉 간헐 누락) 저장된 이후 봉을 보존 —
+    # 겹침 구간 Close 대조를 통과했으므로 수정주가 연속성은 확인된 상태다.
+    stored_tail = stored.loc[stored.index > new.index.max()]
+    if not stored_tail.empty:
+        merged = pd.concat([merged, stored_tail])
     return merged, False
 
 

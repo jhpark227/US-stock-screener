@@ -75,6 +75,9 @@ class ScreenerConfig:
     # Top pick (2026-08-28): 진입 검토 중 집중 후보 선별 개수. 검증(validate_top_picks.py, 38 스냅샷):
     # 클러스터당 1종목 + 매집(acc/surge+acc)×어닝스 임박 우선 top-5가 점수 top-5 대비 +1.46%p(NW t=1.71),
     # 바스켓 승률 63→76%, 최악 스냅샷 -9.7→-7.4%. top-3에서는 매집 우선이 역효과라 5로 고정.
+    # 2026-08-31 재검증: 캡 제거 변형(G)은 종목당 지표(종목당 평균/승률/p5)로도 개선 없음
+    # (-0.39%p, NW t=-1.02, pick 중첩률 96% — 캡은 38개 중 5개 스냅샷에서만 발동).
+    # → 캡 유지 + 밀려난 클러스터 형제를 "동일 베팅 대기" 라벨로 표기 (테마 쏠림 정보 보존).
     top_pick_count: int = 5
     accumulation_days_min: int = 3
     distribution_days_max: int = 1
@@ -905,6 +908,8 @@ def assign_verdicts(
 
     top_pick_rank(1~top_pick_count): 진입 검토 중 집중 후보 — 매집(acc/surge+acc)×어닝스
     임박 우선, 그 다음 점수순, 상관 클러스터당 1종목. 0이면 미선정. 근거는 ScreenerConfig 참조.
+    top pick이 대표한 클러스터에 진입 검토 형제가 있으면 사유에 "동일 베팅 대기: X"를 붙인다
+    (2026-08-31 — 캡이 감추던 테마 쏠림 정보를 리스트에서 읽게 함. 캡 제거 변형은 개선 없음 검증).
     판정은 백테스트로 검증 가능해야 하므로 여기서만 결정한다. AI는 설명문만 작성.
     """
     config = config or ScreenerConfig()
@@ -982,18 +987,27 @@ def assign_verdicts(
 
     entry_idx = [i for i in cand.index if results.at[i, "verdict"] == "진입 검토"]
     used_clusters: set[str] = set()
-    rank = 0
+    picked: list[int] = []
     for i in sorted(entry_idx, key=_pick_key):
         ticker = results.at[i, "ticker"]
         cluster_key = min(clusters[ticker]) if ticker in clusters else None
         if cluster_key is not None and cluster_key in used_clusters:
             continue
-        rank += 1
-        results.at[i, "top_pick_rank"] = rank
+        picked.append(i)
+        results.at[i, "top_pick_rank"] = len(picked)
         if cluster_key is not None:
             used_clusters.add(cluster_key)
-        if rank >= config.top_pick_count:
+        if len(picked) >= config.top_pick_count:
             break
+
+    # 동일 베팅 라벨 (2026-08-31): top pick이 대표한 클러스터에 진입 검토 형제가 있으면
+    # 사유에 표기 — 캡이 감추는 "이 테마에 후보가 몰림" 정보를 리스트에서 읽게 한다.
+    entry_tickers = {results.at[i, "ticker"] for i in entry_idx}
+    for i in picked:
+        ticker = results.at[i, "ticker"]
+        siblings = [t for t in clusters.get(ticker, []) if t != ticker and t in entry_tickers]
+        if siblings:
+            results.at[i, "verdict_reason"] += f" · 동일 베팅 대기: {'·'.join(siblings)}"
     return results
 
 
