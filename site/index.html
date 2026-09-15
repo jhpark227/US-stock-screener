@@ -717,6 +717,20 @@
       line-height: 1.55;
     }
     .ec-note.fallback { color: var(--muted); }
+    .ec-note.structured { display: flex; flex-direction: column; gap: 3px; }
+    .ec-note-row { display: flex; gap: 8px; }
+    .ec-note-label {
+      flex: 0 0 56px;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--muted);
+      white-space: nowrap;
+      padding-top: 1px;
+    }
+    .ec-note-row.risk .ec-note-label, .ec-note-row.risk span:last-child { color: var(--warn); }
+    .ec-pill.sz-std  { border-color: #b2d5c8; background: var(--accent-soft); color: #0e5b45; font-weight: 700; }
+    .ec-pill.sz-half { border-color: #e3d8ae; background: #eee9d9; color: var(--warn); font-weight: 700; }
+    .ec-pill.sz-wait { color: #767676; font-weight: 700; }
 
     /* 대기 — 압축 행 */
     .wait-list {
@@ -2909,9 +2923,12 @@
         .replaceAll("신호 소멸", "관찰 종료");
     }
 
-    function entryPills(r) {
+    const SIZING_CLASSES = { "표준": "sz-std", "절반": "sz-half", "축소": "sz-half", "관망": "sz-wait" };
+
+    function entryPills(r, sizing) {
       const pills = [];
       if (r.top_pick_rank) pills.push(`<span class="ec-pill toppick">★${escapeHtml(r.top_pick_rank)} TOP PICK</span>`);
+      if (sizing && SIZING_CLASSES[sizing]) pills.push(`<span class="ec-pill ${SIZING_CLASSES[sizing]}">사이징: ${escapeHtml(sizing)}</span>`);
       if (r.days_since_trigger === 0 || r._diff === "new") pills.push(`<span class="ec-pill new">NEW</span>`);
       else if (r.days_since_trigger !== null && r.days_since_trigger !== undefined) pills.push(`<span class="ec-pill">D+${escapeHtml(r.days_since_trigger)}</span>`);
       if (r.grade) pills.push(`<span class="ec-pill grade-${String(r.grade).toLowerCase()}">${escapeHtml(r.grade)}등급${regimeFit(r) ? " · 국면 정합" : ""}</span>`);
@@ -2925,11 +2942,24 @@
       return pills.join("");
     }
 
+    // AI 설명 — 신 포맷(진입 검토: why_picked/sizing/execution/risk)은 근거→실행→리스크 행으로,
+    // 구 포맷(comment 단일 문자열)은 기존처럼 한 덩어리로 렌더 (과거 날짜 JSON 호환).
+    function entryNoteHtml(r, note) {
+      if (note && (note.why_picked || note.execution || note.risk)) {
+        const row = (label, text, cls) => text
+          ? `<div class="ec-note-row${cls ? " " + cls : ""}"><span class="ec-note-label">${label}</span><span>${escapeHtml(displayCopy(text))}</span></div>`
+          : "";
+        return `<div class="ec-note structured">${
+          row("근거", note.why_picked) + row("실행", note.execution) + row("⚠ 리스크", note.risk, "risk")
+        }</div>`;
+      }
+      if (note && note.comment) return `<div class="ec-note">${escapeHtml(displayCopy(note.comment))}</div>`;
+      return r.verdict_reason ? `<div class="ec-note fallback">${escapeHtml(displayCopy(r.verdict_reason))}</div>` : "";
+    }
+
     function entryCardHtml(r, comments) {
-      const note = comments[r.ticker] || "";
-      const noteHtml = note
-        ? `<div class="ec-note">${escapeHtml(note)}</div>`
-        : (r.verdict_reason ? `<div class="ec-note fallback">${escapeHtml(displayCopy(r.verdict_reason))}</div>` : "");
+      const note = comments[r.ticker] || null;
+      const noteHtml = entryNoteHtml(r, note);
       const fmt = (v, type) => v === null || v === undefined ? "–" : formatValue(v, type);
       // 툴팁 아닌 상시 텍스트 — 터치·키보드에서도 top pick 의미가 보이도록
       const topPickHtml = r.top_pick_rank
@@ -2944,7 +2974,7 @@
             </div>
             <div class="ec-score">${escapeHtml(fmt(r.score, "score2"))}<small>Score</small></div>
           </div>
-          <div class="ec-pills">${entryPills(r)}</div>
+          <div class="ec-pills">${entryPills(r, note?.sizing)}</div>
           ${topPickHtml}
           <div>
             <div class="tr-inline-chart-header">
@@ -2963,7 +2993,9 @@
     }
 
     function waitRowHtml(r, comments) {
-      const reason = comments[r.ticker] || displayCopy(r.verdict_reason);
+      const note = comments[r.ticker] || null;
+      const noteText = note ? (note.comment || [note.execution, note.risk].filter(Boolean).join(" · ")) : "";
+      const reason = noteText ? displayCopy(noteText) : displayCopy(r.verdict_reason);
       const dplus = r.days_since_trigger === 0 ? "NEW" :
         (r.days_since_trigger !== null && r.days_since_trigger !== undefined ? `D+${r.days_since_trigger}` : "");
       const fmt = (v, type) => v === null || v === undefined ? "–" : formatValue(v, type);
@@ -2991,7 +3023,7 @@
       if (!cands.length) { section.style.display = "none"; return; }
 
       const comments = {};
-      (c?.items || []).forEach(it => { comments[it.ticker] = displayCopy(it.comment); });
+      (c?.items || []).forEach(it => { comments[it.ticker] = it; });
 
       // AI 시장 코멘트는 시장 배너에 흡수
       const aiEl = document.getElementById("marketBannerAI");
