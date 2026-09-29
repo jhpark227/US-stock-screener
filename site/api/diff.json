@@ -1,1 +1,1 @@
-{"has_diff": true, "prev_date": "2026-09-25", "curr_date": "2026-09-28", "new_entries": ["ASML", "JBL", "RBC"], "dropped": ["ALAB", "AUR", "BRK-A", "DOCN", "ECHO", "INTC", "MSFT", "MSTR"], "upgraded": [], "downgraded": []}
+{"has_diff": true, "prev_date": "2026-09-28", "curr_date": "2026-09-29", "new_entries": ["CCL", "KR", "MSFT", "NOK", "STM", "WAB"], "dropped": ["EQH", "EQNR", "HALO", "LSCC", "MPWR", "MTSI", "QCOM", "VLO", "YPF"], "upgraded": ["SNX"], "downgraded": ["HUM"]}
