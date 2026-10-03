@@ -1,1 +1,1 @@
-{"has_diff": true, "prev_date": "2026-10-01", "curr_date": "2026-10-02", "new_entries": ["ARW", "BBD", "LSCC", "NTAP", "QRVO"], "dropped": ["FRO", "JBL", "MOG-A", "MSFT", "MSGS"], "upgraded": ["FORM"], "downgraded": []}
+{"has_diff": true, "prev_date": "2026-10-01", "curr_date": "2026-10-02", "new_entries": ["ARW", "BBD", "CLS", "LSCC", "NTAP", "QRVO", "SHEL"], "dropped": ["FRO", "JBL", "MOG-A", "MSFT", "MSGS"], "upgraded": ["FORM"], "downgraded": []}
