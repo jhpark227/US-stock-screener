@@ -1,1 +1,1 @@
-{"has_diff": true, "prev_date": "2026-10-12", "curr_date": "2026-10-13", "new_entries": ["CPNG", "DEO", "GGG", "IFF", "MTSI", "PDD", "RELX", "TTMI", "YUMC"], "dropped": ["ALAB", "AMT", "CGNX", "CIEN", "FN", "HTHT", "MRVL", "RBA", "TW", "TWLO", "TXG", "VIAV"], "upgraded": [], "downgraded": []}
+{"has_diff": true, "prev_date": "2026-10-13", "curr_date": "2026-10-14", "new_entries": ["AMT", "BIIB", "BLK", "ELV", "FAST", "GWW", "HTHT", "IBRX", "IDXX", "MDT", "RBA"], "dropped": ["CPNG", "SNOW", "TTMI"], "upgraded": [], "downgraded": ["WCC"]}
