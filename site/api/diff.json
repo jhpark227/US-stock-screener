@@ -1,1 +1,1 @@
-{"has_diff": true, "prev_date": "2026-11-16", "curr_date": "2026-11-17", "new_entries": ["AES", "AS", "BTI", "CHD", "CHRW", "CL", "ELV", "TME", "UI", "VMRK"], "dropped": ["AMG", "APG", "BBIO", "BDX", "EL", "ES", "EXC", "EXR", "GEHC", "LTH", "MT", "NGG", "NTES", "SN", "TS", "ZM"], "upgraded": ["CHYM", "CLX"], "downgraded": []}
+{"has_diff": true, "prev_date": "2026-11-17", "curr_date": "2026-11-18", "new_entries": ["ALC", "MDLN", "MFC"], "dropped": ["BAH", "EQIX", "EVRG", "FNF", "HUM", "LYV", "NVO", "PNW", "REGN", "SIRI", "TPR", "TYL"], "upgraded": [], "downgraded": ["VMRK"]}
